@@ -123,7 +123,7 @@ src/<id>/                   the extension package (this is what gets zipped)
     outline.py              whole-pixel outlines, labels, merge_near_colors
     edge_ids.py             island index <-> colour for sharp-edge outlines (EDGES pass)
     guides.py               Bresenham lines, floor grid layer
-    compose.py              straight-alpha "over", layer stacks, sprite sheets
+    compose.py              straight-alpha "over", layer stacks, sprite sheets, split_tiles
     png.py                  stdlib PNG encode/decode (byte-exact output)
     presets.py              slope and resolution presets
     overlap.py              depth-sort warning (3D bounding-box interpenetration)

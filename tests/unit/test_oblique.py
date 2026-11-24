@@ -584,3 +584,25 @@ def test_fit_frame_rejects_bad_input() -> None:
         oblique.fit_frame((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 0, 4)
     with pytest.raises(ValueError):
         oblique.fit_frame((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 16, -1)
+
+
+# --------------------------------------------------------------------------- tile origin
+
+
+def test_tile_origin_is_the_world_origin_in_frame_pixels() -> None:
+    """Camera at x = 0: the origin is in the middle of the frame; z = camera height below the middle."""
+    params = make_params(resolution_x=64, resolution_y=48, pixels_per_unit=8, camera_height_fraction=0.25)
+    cam_x, _, cam_z = params.camera()
+    assert (cam_x, cam_z) == (0.0, 1.5)
+    assert params.tile_origin_px() == (32, 12)
+
+
+def test_tile_origin_follows_the_camera_offset() -> None:
+    params = make_params(resolution_x=64, resolution_y=48, pixels_per_unit=8, camera_offset_x=0.5)
+    assert params.tile_origin_px()[0] == 28
+
+
+def test_tile_origin_is_whole_pixels_without_pixel_exact() -> None:
+    params = make_params(pixel_exact=False, resolution_x=65, resolution_y=47, camera_offset_x=0.33)
+    ox, oy = params.tile_origin_px()
+    assert isinstance(ox, int) and isinstance(oy, int)

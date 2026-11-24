@@ -367,6 +367,69 @@ def test_turnaround_writes_frames_and_sheet(addon, tmp_path) -> None:
     assert settings.direction == pytest.approx(math.radians(30))
 
 
+def test_split_into_tiles_writes_a_padded_copy_of_each_pass(addon, tmp_path) -> None:
+    settings = _setup_scene(
+        str(tmp_path),
+        pass_flat=True,
+        pass_shaded=False,
+        pass_ids=False,
+        pass_silhouette=True,
+        pass_composite=False,
+        outline_enabled=False,
+        grid_enabled=False,
+        split_tiles=True,
+        tile_padding=2,
+        camera_height_fraction=0.5,
+    )
+    assert bpy.ops.oblique_rig.render_guides() == {"FINISHED"}
+    assert sorted(os.listdir(tmp_path)) == [
+        "guide_flat.png",
+        "guide_flat_tiles.png",
+        "guide_silhouette.png",
+        "guide_silhouette_tiles.png",
+    ]
+    read = addon.render.read_rgba
+    params = addon.properties.params_from_settings(settings)
+    for pass_name in ("flat", "silhouette"):
+        image = read(str(tmp_path / f"guide_{pass_name}.png"))
+        tiles = read(str(tmp_path / f"guide_{pass_name}_tiles.png"))
+        expected = addon.core.compose.split_tiles(image, 8, 2, origin=params.tile_origin_px())
+        assert np.array_equal(tiles, expected)
+    # 64 x 48 at 8 px per unit, camera on the tile grid: 8 x 6 tiles, 2 px around each.
+    assert params.tile_origin_px() == (32, 0)
+    assert tiles.shape == (6 * 8 + 7 * 2, 8 * 8 + 9 * 2, 4)
+    assert np.array_equal(tiles[2:10, 2:10], image[:8, :8])
+
+
+def test_split_into_tiles_is_off_by_default(guides) -> None:
+    assert not any(name.endswith("_tiles.png") for name in os.listdir(guides["dir"]))
+
+
+def test_turnaround_splits_frames_but_not_the_sheet(addon, tmp_path) -> None:
+    _setup_scene(
+        str(tmp_path),
+        pass_flat=True,
+        pass_shaded=False,
+        pass_ids=False,
+        pass_silhouette=False,
+        pass_composite=False,
+        outline_enabled=False,
+        grid_enabled=False,
+        direction_count=2,
+        make_sheet=True,
+        split_tiles=True,
+        tile_padding=0,
+    )
+    assert bpy.ops.oblique_rig.render_turnaround() == {"FINISHED"}
+    assert sorted(os.listdir(tmp_path)) == [
+        "guide_d00_flat.png",
+        "guide_d00_flat_tiles.png",
+        "guide_d01_flat.png",
+        "guide_d01_flat_tiles.png",
+        "guide_sheet_flat.png",
+    ]
+
+
 def test_relative_output_dir_cancels_in_an_unsaved_file() -> None:
     settings = _setup_scene("//guides/")
     assert bpy.data.filepath == ""

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Layer compositing and sprite sheets on RGBA pixel arrays.
+"""Layer compositing, sprite sheets and tile splitting on RGBA pixel arrays.
 
 Images are ``(height, width, 4)`` uint8 RGBA with straight (unpremultiplied)
 alpha and row 0 at the bottom. Results are rounded half up to integers.
@@ -105,4 +105,47 @@ def sheet(frames: Sequence[np.ndarray], columns: int | None = None) -> np.ndarra
         row, col = divmod(index, cols)
         bottom = (rows - 1 - row) * height
         out[bottom : bottom + height, col * width : (col + 1) * width] = frame
+    return out
+
+
+def split_tiles(image: np.ndarray, tile: int, padding: int, origin: tuple[int, int] = (0, 0)) -> np.ndarray:
+    """Cut ``image`` into ``tile`` x ``tile`` pixel tiles and lay them out with ``padding`` around each.
+
+    The tiles keep their places; ``padding`` transparent pixels go between
+    neighbours and around the outside, so the result is
+    ``columns * tile + (columns + 1) * padding`` wide (rows likewise) and
+    tile ``(column, row)`` starts at ``padding + column * (tile + padding)``.
+    In a tileset importer that is a margin and a separation of ``padding``.
+
+    ``origin`` is a pixel ``(x, y)`` from the bottom-left corner that a tile
+    boundary runs through (only its remainder modulo ``tile`` matters). Tiles
+    the image only partly covers are completed with transparent pixels.
+
+    Raises:
+        ValueError: if ``tile`` < 1, ``padding`` < 0 or the image is not ``(h, w, 4)``.
+    """
+    source = _check_rgba(image, "image")
+    if tile < 1:
+        raise ValueError(f"tile must be >= 1, got {tile}")
+    if padding < 0:
+        raise ValueError(f"padding must be >= 0, got {padding}")
+    height, width = source.shape[:2]
+    left = (tile - origin[0] % tile) % tile
+    below = (tile - origin[1] % tile) % tile
+    columns = max(math.ceil((left + width) / tile), 1)
+    rows = max(math.ceil((below + height) / tile), 1)
+    full = np.zeros((rows * tile, columns * tile, 4), dtype=np.uint8)
+    full[below : below + height, left : left + width] = source
+    if padding == 0:
+        return full
+    step = tile + padding
+    out = np.zeros(
+        (rows * tile + (rows + 1) * padding, columns * tile + (columns + 1) * padding, 4), np.uint8
+    )
+    for row in range(rows):
+        for column in range(columns):
+            y, x = padding + row * step, padding + column * step
+            out[y : y + tile, x : x + tile] = full[
+                row * tile : (row + 1) * tile, column * tile : (column + 1) * tile
+            ]
     return out

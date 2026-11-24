@@ -261,6 +261,22 @@ class OBLIQUE_RIG_Settings(PropertyGroup):
         description="Turnaround: also write one horizontal sprite sheet per pass",
         default=True,
     )
+    split_tiles: BoolProperty(
+        name="Split into Tiles",
+        description=(
+            "Also write each pass cut into tiles of Pixels per Unit, with Tile Padding around "
+            "every tile, as <name>_<pass>_tiles.png"
+        ),
+        default=False,
+    )
+    tile_padding: IntProperty(
+        name="Tile Padding",
+        description="Transparent pixels between neighbouring tiles and around the outside",
+        default=1,
+        min=0,
+        soft_max=16,
+        subtype="PIXEL",
+    )
     # ------------------------------------------------------------------ grid
     grid_enabled: BoolProperty(
         name="Grid",

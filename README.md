@@ -332,6 +332,8 @@ Fit) and the depth warnings.
 | Silhouette | off | Pass: the shape in black. |
 | Composite | on | Pass: shaded (or flat) with grid and outline on top. |
 | Sprite Sheet | on | Turnaround: also write one sheet per pass. |
+| Split into Tiles | off | Also write each pass cut into tiles, as `<name>_<pass>_tiles.png`. |
+| Tile Padding | 1 px | Transparent pixels between neighbouring tiles and around the outside. |
 | Outline | off | Write the outline pass (options below). |
 | Grid | off | Write the grid pass (options below). |
 
@@ -360,6 +362,17 @@ Passes you did not enable are not written, even when one was rendered to
 derive another (the flat pass feeds silhouette and outline, the ids pass feeds
 object inner lines, and an edge-id render feeds sharp-edge inner lines; that
 one is never written).
+
+**Split into Tiles** writes a second file per pass, `<name>_<pass>_tiles.png`:
+the same image cut into tiles of Pixels per Unit, with Tile Padding
+transparent pixels between neighbours and around the outside. Tiles keep
+their places, so tile (column, row) starts at `padding + column * (tile +
+padding)`; in a tileset importer set both margin and separation to Tile
+Padding. Tile boundaries are the unit grid lines of the scene (the ones the
+grid pass draws at Grid Step 1), not the frame edges: where the frame cuts a
+tile, the rest of that tile is transparent. With Auto Seat on, content an odd
+number of tiles wide sits half a tile off that grid; turn Auto Seat off for
+tilesets. Turnaround frames are split too; sprite sheets are not.
 
 **Turnarounds** write `<name>_dNN_<pass>.png` for facing `NN` (`d00` is
 Direction, then every 360/Directions degrees), and with Sprite Sheet

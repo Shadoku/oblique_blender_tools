@@ -199,6 +199,11 @@ class OBLIQUE_RIG_PT_output(_SubPanel, Panel):
         col.prop(settings, "pass_composite")
         col.prop(settings, "make_sheet")
 
+        layout.prop(settings, "split_tiles")
+        col = layout.column(align=True)
+        col.active = settings.split_tiles
+        col.prop(settings, "tile_padding")
+
         layout.prop(settings, "outline_enabled")
         col = layout.column(align=True)
         col.active = settings.outline_enabled

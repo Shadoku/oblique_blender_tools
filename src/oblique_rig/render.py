@@ -400,6 +400,11 @@ def render_guides(
 ) -> list[str]:
     """Render and derive the enabled passes; write ``<name>_<pass>.png`` files; return their paths.
 
+    With ``settings.split_tiles`` every written pass also goes out as
+    ``<name>_<pass>_tiles.png``: cut into tiles of Pixels per Unit on the
+    world unit grid, with ``settings.tile_padding`` pixels around each
+    (``core.compose.split_tiles``).
+
     ``settings`` is read by attribute only (the PropertyGroup or any object
     with the same fields); ``params`` is a ``core.oblique.RigParams``. With
     ``direction`` the rig's "Direction" input is set for this call and
@@ -460,7 +465,19 @@ def render_guides(
         path = path_of(pass_name)
         write_rgba(path, pixels)
         written[pass_name] = path
-    return [written[p] for p in PASS_ORDER if p in written]
+        images[pass_name] = pixels
+    paths = [written[p] for p in PASS_ORDER if p in written]
+    if getattr(settings, "split_tiles", False):
+        origin = params.tile_origin_px()
+        padding = max(int(settings.tile_padding), 0)
+        for pass_name in [p for p in PASS_ORDER if p in written]:
+            path = path_of(f"{pass_name}{TILES_SUFFIX}")
+            write_rgba(path, compose.split_tiles(images[pass_name], params.pixels_per_unit, padding, origin))
+            paths.append(path)
+    return paths
+
+
+TILES_SUFFIX = "_tiles"
 
 
 def pass_name_of(path: str, name: str) -> str:

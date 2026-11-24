@@ -129,3 +129,71 @@ def test_rgba8() -> None:
     assert compose.rgba8((0, 128, 255, 255)) == (0, 128, 255, 255)
     assert compose.rgba8((1.5, -0.2, 0.0, 1.0)) == (255, 0, 0, 255)
     assert compose.rgba8((0.2, 0.4, 0.6)) == (51, 102, 153, 255)
+
+
+# --------------------------------------------------------------------------- tiles
+
+
+def numbered(height: int, width: int) -> np.ndarray:
+    """Every pixel distinct: red = column, green = row (row 0 at the bottom), opaque."""
+    out = np.zeros((height, width, 4), dtype=np.uint8)
+    out[..., 0] = np.arange(width)[None, :]
+    out[..., 1] = np.arange(height)[:, None]
+    out[..., 3] = 255
+    return out
+
+
+def test_split_tiles_without_padding_is_the_image() -> None:
+    image = numbered(8, 12)
+    assert np.array_equal(compose.split_tiles(image, 4, 0), image)
+
+
+def test_split_tiles_puts_padding_around_every_tile() -> None:
+    image = numbered(8, 12)  # 3 x 2 tiles of 4 px
+    out = compose.split_tiles(image, 4, 2)
+    assert out.shape == (2 * 4 + 3 * 2, 3 * 4 + 4 * 2, 4)
+    assert out.dtype == np.uint8
+    for row in range(2):
+        for col in range(3):
+            y, x = 2 + row * 6, 2 + col * 6
+            assert np.array_equal(
+                out[y : y + 4, x : x + 4], image[row * 4 : row * 4 + 4, col * 4 : col * 4 + 4]
+            )
+    gaps = np.ones(out.shape[:2], bool)
+    for row in range(2):
+        for col in range(3):
+            gaps[2 + row * 6 : 6 + row * 6, 2 + col * 6 : 6 + col * 6] = False
+    assert not out[gaps].any(), "padding is transparent black"
+
+
+def test_split_tiles_completes_partial_tiles_with_transparency() -> None:
+    """A 10 x 6 image at tile 4: 3 x 2 tiles, the last column and the top row padded out."""
+    image = numbered(6, 10)
+    out = compose.split_tiles(image, 4, 0)
+    assert out.shape == (8, 12, 4)
+    assert np.array_equal(out[:6, :10], image)
+    assert not out[6:].any() and not out[:, 10:].any()
+
+
+def test_split_tiles_origin_shifts_the_grid() -> None:
+    """A tile boundary runs through the origin pixel: 1 px left and 3 px below it are partial tiles."""
+    image = numbered(8, 8)
+    out = compose.split_tiles(image, 4, 0, origin=(1, 3))
+    assert out.shape == (12, 12, 4)
+    assert np.array_equal(out[1:9, 3:11], image)
+    assert not out[:1].any() and not out[:, :3].any()
+    again = compose.split_tiles(image, 4, 0, origin=(1 + 8, 3 - 4))
+    assert np.array_equal(again, out), "the origin only matters modulo the tile size"
+
+
+def test_split_tiles_aligned_origin_adds_nothing() -> None:
+    image = numbered(8, 8)
+    assert np.array_equal(compose.split_tiles(image, 4, 0, origin=(4, 8)), image)
+
+
+@pytest.mark.parametrize(("tile", "padding"), [(0, 0), (-4, 0), (4, -1)])
+def test_split_tiles_rejects_bad_input(tile: int, padding: int) -> None:
+    with pytest.raises(ValueError):
+        compose.split_tiles(numbered(4, 4), tile, padding)
+    with pytest.raises(ValueError):
+        compose.split_tiles(np.zeros((4, 4)), 4, 0)

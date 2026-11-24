@@ -344,6 +344,20 @@ class RigParams:
             z = snap_to_pixel(z, self.pixels_per_unit)
         return x, y, z
 
+    def tile_origin_px(self) -> tuple[int, int]:
+        """The world origin in frame pixels ``(x, y)`` from the bottom-left corner, whole pixels.
+
+        Unit grid lines (and so tile boundaries, one tile being one unit) run
+        through it: ``(res / 2 - camera * ppu)`` on each axis with the
+        effective resolution. Pass it to ``core.compose.split_tiles``.
+        """
+        res_x, res_y = self.effective_resolution()
+        cam_x, _, cam_z = self.camera()
+        return (
+            _round_half_up(res_x / 2 - cam_x * self.pixels_per_unit),
+            _round_half_up(res_y / 2 - cam_z * self.pixels_per_unit),
+        )
+
 
 SPLAY_NEEDS_DEPTH_UP = "Tile Splay needs Depth Up above 0"
 SPLAY_NEEDS_DEPTH_RIGHT_0 = "Whole tiles need Depth Right 0"
@@ -407,6 +421,10 @@ def splay_warnings(params: RigParams) -> list[str]:
     if any((tiles * params.pixels_per_unit) % 1 for tiles in params.splay_tiles()):
         warnings.append(SPLAY_TILES_NOT_WHOLE_PX)
     return warnings
+
+
+def _round_half_up(value: float) -> int:
+    return math.floor(value + 0.5 + _EPS)
 
 
 def project_to_pixels(
