@@ -128,8 +128,8 @@ src/<id>/                   the extension package (this is what gets zipped)
     presets.py              slope and resolution presets
     overlap.py              depth-sort warning (3D bounding-box interpenetration)
     splay.py                wall splay reference (numpy) the node group is tested against;
-                            TERRAIN_ATTRIBUTE
-  rig.py                    Blender-facing builders: node group, camera, render settings, bounds
+                            TERRAIN_ATTRIBUTE, loose parts (detail_mask) that follow their wall
+  rig.py                    Blender-facing builders: node group, camera, render settings, bounds, terrain marks
   render.py                 Workbench passes (incl. EDGES: VERTEX colour, Raw), settings guard, guide/turnaround files
   operators.py              thin operators: build, add_selected, add_calibration, remove,
                             fit_to_content, apply_slope_preset, apply_resolution_preset,

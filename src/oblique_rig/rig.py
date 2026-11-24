@@ -79,6 +79,19 @@ CALIB_MATERIALS = {
 # Object types whose bounding box describes real geometry (for the interpenetration check).
 GEOMETRY_TYPES = frozenset({"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES", "POINTCLOUD", "VOLUME"})
 
+# Point and face attributes that only exist inside the node group (stored between Seat and
+# Apply Splay), and with them the marks read from the source meshes: none reach the output.
+SPLAY_LEVELS_ATTRIBUTE = "oblique_splay_levels"
+SPLAY_UNIT_ATTRIBUTE = "oblique_splay_unit"
+REMOVED_ATTRIBUTES = (
+    splay.SPLAY_ATTRIBUTE,
+    SPLAY_LEVELS_ATTRIBUTE,
+    SPLAY_UNIT_ATTRIBUTE,
+    splay.TERRAIN_ATTRIBUTE,
+    splay.DETAIL_ATTRIBUTE,
+    splay.MESH_ID_ATTRIBUTE,
+)
+
 RIG_OWNED = frozenset({RIG_NAME, CAMERA_NAME, SUN_NAME})
 VIEW_MODES = ("SOURCE", "SHEARED")
 
@@ -337,12 +350,32 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
 
     # Tile splay: store the offset per point before the Edge IDs branch (Split Edges copies
     # it to every duplicate), apply it after, then drop both helper attributes.
+    # Loose parts (details) do not splay on their own: they follow the nearest terrain face
+    # of their mesh, so that face's direction and the levels are stored first to be sampled.
+    field = _add_splay_field(ng, n_in, add)
+    seated = n_seat.outputs["Geometry"]
+    for name, data_type, domain, socket in (
+        (SPLAY_LEVELS_ATTRIBUTE, "FLOAT", "POINT", field["levels"]),
+        (SPLAY_UNIT_ATTRIBUTE, "FLOAT_VECTOR", "FACE", field["face_unit"]),
+    ):
+        n_store = add("GeometryNodeStoreNamedAttribute", 500, 400, f"Store {name}")
+        n_store.data_type = data_type
+        n_store.domain = domain
+        n_store.inputs["Name"].default_value = name
+        links.new(seated, n_store.inputs["Geometry"])
+        links.new(socket, n_store.inputs["Value"])
+        seated = n_store.outputs["Geometry"]
+    n_body = add("GeometryNodeSeparateGeometry", 500, 600, "Terrain Body")
+    n_body.domain = "POINT"
+    links.new(seated, n_body.inputs["Geometry"])
+    links.new(field["body"], n_body.inputs["Selection"])
+
     n_store_splay = add("GeometryNodeStoreNamedAttribute", 550, 200, "Store Splay")
     n_store_splay.data_type = "FLOAT_VECTOR"
     n_store_splay.domain = "POINT"
     n_store_splay.inputs["Name"].default_value = splay.SPLAY_ATTRIBUTE
-    links.new(n_seat.outputs["Geometry"], n_store_splay.inputs["Geometry"])
-    links.new(_add_splay_field(ng, n_in, add), n_store_splay.inputs["Value"])
+    links.new(seated, n_store_splay.inputs["Geometry"])
+    links.new(_add_follow_field(ng, add, n_body.outputs["Selection"], field), n_store_splay.inputs["Value"])
     seated = n_store_splay.outputs["Geometry"]
 
     n_edge_switch = add("GeometryNodeSwitch", 650, 200, "Edge IDs")
@@ -359,7 +392,7 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     links.new(n_edge_switch.outputs[0], n_apply.inputs["Geometry"])
     links.new(n_splay_read.outputs["Attribute"], n_apply.inputs["Offset"])
     geometry = n_apply.outputs["Geometry"]
-    for index, attribute in enumerate((splay.SPLAY_ATTRIBUTE, splay.TERRAIN_ATTRIBUTE)):
+    for index, attribute in enumerate(REMOVED_ATTRIBUTES):
         n_remove = add("GeometryNodeRemoveAttribute", 750 + 30 * index, 200, f"Remove {attribute}")
         n_remove.inputs["Name"].default_value = attribute
         links.new(geometry, n_remove.inputs["Geometry"])
@@ -372,8 +405,61 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     return ng
 
 
-def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> bpy.types.NodeSocket:
-    """Nodes for the tile splay offset field of ``core.splay.splay_offsets``; return its vector socket.
+def _add_follow_field(ng: bpy.types.NodeTree, add, body_geometry, field: dict) -> bpy.types.NodeSocket:
+    """The final splay offset per point: the body's own offset, or for details the followed one.
+
+    A detail point (terrain and ``core.splay.DETAIL_ATTRIBUTE``) samples the
+    nearest point of ``body_geometry`` (the terrain without details) within
+    its own mesh (``core.splay.MESH_ID_ATTRIBUTE`` as Group ID) and takes
+    that face's stored direction times the levels interpolated there.
+    """
+    links = ng.links
+    x, y = 150, 900
+
+    def named(name: str, data_type: str, px: float, py: float) -> bpy.types.NodeSocket:
+        node = add("GeometryNodeInputNamedAttribute", px, py, f"Read {name}")
+        node.data_type = data_type
+        node.inputs["Name"].default_value = name
+        return node.outputs["Attribute"]
+
+    mesh_id = named(splay.MESH_ID_ATTRIBUTE, "INT", x - 400, y)
+    n_pos = add("GeometryNodeInputPosition", x - 400, y - 150)
+    samples = {}
+    for index, (name, data_type) in enumerate(
+        ((SPLAY_LEVELS_ATTRIBUTE, "FLOAT"), (SPLAY_UNIT_ATTRIBUTE, "FLOAT_VECTOR"))
+    ):
+        n_sample = add("GeometryNodeSampleNearestSurface", x, y - 250 * index, f"Sample {name}")
+        n_sample.data_type = data_type
+        links.new(body_geometry, n_sample.inputs["Mesh"])
+        links.new(named(name, data_type, x - 200, y - 250 * index - 100), n_sample.inputs["Value"])
+        links.new(mesh_id, n_sample.inputs["Group ID"])
+        links.new(n_pos.outputs["Position"], n_sample.inputs["Sample Position"])
+        links.new(mesh_id, n_sample.inputs["Sample Group ID"])
+        samples[name] = n_sample
+    n_followed = add("ShaderNodeVectorMath", x + 200, y - 100, "Followed Splay")
+    n_followed.operation = "SCALE"
+    links.new(samples[SPLAY_UNIT_ATTRIBUTE].outputs["Value"], n_followed.inputs[0])
+    links.new(samples[SPLAY_LEVELS_ATTRIBUTE].outputs["Value"], n_followed.inputs["Scale"])
+    n_valid = add("GeometryNodeSwitch", x + 350, y - 100, "Has Body")
+    n_valid.input_type = "VECTOR"
+    n_valid.inputs["False"].default_value = (0.0, 0.0, 0.0)
+    links.new(samples[SPLAY_UNIT_ATTRIBUTE].outputs["Is Valid"], n_valid.inputs["Switch"])
+    links.new(n_followed.outputs[0], n_valid.inputs["True"])
+    n_pick = add("GeometryNodeSwitch", x + 500, y - 100, "Detail Follows")
+    n_pick.input_type = "VECTOR"
+    links.new(field["follower"], n_pick.inputs["Switch"])
+    links.new(field["offset"], n_pick.inputs["False"])
+    links.new(n_valid.outputs[0], n_pick.inputs["True"])
+    return n_pick.outputs[0]
+
+
+def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> dict[str, bpy.types.NodeSocket]:
+    """Nodes for the tile splay offset field of ``core.splay.splay_offsets``; return its sockets.
+
+    ``offset`` is the vector field for the terrain body, ``levels`` its levels
+    (0 outside the body), ``face_unit`` each face's own ``k * h``, ``body`` the
+    points that splay on their own (terrain, not a detail) and ``follower``
+    the detail points, which :func:`_add_follow_field` handles.
 
     Evaluated on the point domain of the seated geometry (Store Named
     Attribute). Same rule and same two solve branches as the core reference:
@@ -546,7 +632,20 @@ def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> bpy.t
     n_terrain = add("GeometryNodeInputNamedAttribute", lx - 400, ly - 400, "Terrain Attribute")
     n_terrain.data_type = "BOOLEAN"
     n_terrain.inputs["Name"].default_value = splay.TERRAIN_ATTRIBUTE
-    terrain = n_terrain.outputs["Attribute"]
+    n_detail = add("GeometryNodeInputNamedAttribute", lx - 400, ly - 550, "Detail Attribute")
+    n_detail.data_type = "BOOLEAN"
+    n_detail.inputs["Name"].default_value = splay.DETAIL_ATTRIBUTE
+
+    def boolean(operation: str, a, b, px: float, py: float, name: str) -> bpy.types.NodeSocket:
+        node = add("FunctionNodeBooleanMath", px, py, name)
+        node.operation = operation
+        links.new(a, node.inputs[0])
+        links.new(b, node.inputs[1])
+        return node.outputs[0]
+
+    marked = n_terrain.outputs["Attribute"]
+    follower = boolean("AND", marked, n_detail.outputs["Attribute"], lx - 200, ly - 550, "Follower")
+    terrain = boolean("NIMPLY", marked, n_detail.outputs["Attribute"], lx - 200, ly - 450, "Body")
     terrain_z = switch("FLOAT", terrain, -1e9, pz, lx - 50, ly - 300, "Terrain Z")
 
     quantised = []
@@ -588,9 +687,24 @@ def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> bpy.t
     links.new(unit, n_offset.inputs[0])
     links.new(levels, n_offset.inputs["Scale"])
     has_wall = math_node("GREATER_THAN", trace, 0.0, sx + 1000, y, "Has Wall")
-    return switch(
+    offset = switch(
         "VECTOR", has_wall, (0.0, 0.0, 0.0), n_offset.outputs[0], sx + 1200, y - 300, "Splay Offset"
     )
+    # Each face's own k * h = hypot(side * nx, back * max(ny, 0)) * (nx, ny) / w; zero for floors.
+    n_face_unit = add("ShaderNodeVectorMath", x + 1250, y - 500, "Face Splay")
+    n_face_unit.operation = "SCALE"
+    links.new(n_rhs.outputs[0], n_face_unit.inputs[0])
+    links.new(
+        math_node("DIVIDE", 1.0, math_node("MAXIMUM", w, 1e-12, x + 900, y - 550), x + 1050, y - 550),
+        n_face_unit.inputs["Scale"],
+    )
+    return {
+        "offset": offset,
+        "levels": levels,
+        "face_unit": n_face_unit.outputs[0],
+        "body": terrain,
+        "follower": follower,
+    }
 
 
 def _add_edge_id_branch(ng: bpy.types.NodeTree, n_in: bpy.types.Node, seated, add) -> bpy.types.NodeSocket:
@@ -921,6 +1035,75 @@ def source_boxes(
         lo, hi = oblique.bounds([tuple(matrix @ Vector(c)) for c in ob_eval.bound_box])
         boxes.append((ob.name, lo, hi))
     return boxes
+
+
+# --------------------------------------------------------------------------- terrain marks
+
+
+def _point_attribute(mesh: bpy.types.Mesh, name: str, data_type: str = "BOOLEAN") -> bpy.types.Attribute:
+    attr = mesh.attributes.get(name)
+    if attr is not None and (attr.domain, attr.data_type) != ("POINT", data_type):
+        mesh.attributes.remove(attr)
+        attr = None
+    if attr is None:
+        attr = mesh.attributes.new(name, data_type, "POINT")
+    return attr
+
+
+def mark_terrain_mesh(mesh: bpy.types.Mesh) -> None:
+    """Write the terrain marks on ``mesh`` (Object Mode data): terrain, details and the mesh id.
+
+    Every vertex becomes terrain. ``core.splay.DETAIL_ATTRIBUTE`` is set on
+    the loose parts other than the largest (``core.splay.detail_mask``), which
+    then lean with the wall they sit on, and ``core.splay.MESH_ID_ATTRIBUTE``
+    holds one value for the whole mesh so they only follow their own mesh.
+    """
+    count = len(mesh.vertices)
+    verts = [0.0] * (count * 3)
+    mesh.vertices.foreach_get("co", verts)
+    points = [verts[i : i + 3] for i in range(0, len(verts), 3)]
+    faces = [tuple(polygon.vertices) for polygon in mesh.polygons]
+    edges = [tuple(edge.vertices) for edge in mesh.edges]
+    detail = splay.detail_mask(points, faces, edges)
+    _point_attribute(mesh, splay.TERRAIN_ATTRIBUTE).data.foreach_set("value", [True] * count)
+    _point_attribute(mesh, splay.DETAIL_ATTRIBUTE).data.foreach_set("value", detail.tolist())
+    _point_attribute(mesh, splay.MESH_ID_ATTRIBUTE, "INT").data.foreach_set(
+        "value", [splay.mesh_id(mesh.name)] * count
+    )
+    mesh.update()
+
+
+def clear_terrain_mesh(mesh: bpy.types.Mesh) -> None:
+    """Remove the terrain marks from ``mesh``."""
+    removed = False
+    for name in (splay.TERRAIN_ATTRIBUTE, splay.DETAIL_ATTRIBUTE, splay.MESH_ID_ATTRIBUTE):
+        attr = mesh.attributes.get(name)
+        if attr is not None:
+            mesh.attributes.remove(attr)
+            removed = True
+    if removed:
+        mesh.update()
+
+
+def refresh_terrain_marks() -> list[str]:
+    """Re-mark every source mesh that is already marked as terrain; return the mesh names.
+
+    Geometry added since Mark as Terrain reads as unmarked, and the split
+    into body and details may have changed; a rebuild puts both right. Meshes
+    in Edit Mode are skipped (their attributes are written back on exit).
+    """
+    source = bpy.data.collections.get(SOURCE_COLLECTION)
+    if source is None:
+        return []
+    done: dict[str, bpy.types.Mesh] = {}
+    for ob in source.all_objects:
+        mesh = ob.data if ob.type == "MESH" else None
+        if mesh is None or mesh.name in done or mesh.is_editmode:
+            continue
+        if splay.TERRAIN_ATTRIBUTE in mesh.attributes:
+            mark_terrain_mesh(mesh)
+            done[mesh.name] = mesh
+    return list(done)
 
 
 # --------------------------------------------------------------------------- viewport toggle

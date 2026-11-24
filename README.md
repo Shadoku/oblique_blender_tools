@@ -168,7 +168,18 @@ next. A 2-level cliff shows twice as much: two levels of side wall and
 `2 * Back Tiles` of rim. **Mark as Terrain** writes a boolean point attribute
 `oblique_terrain` on the mesh data, so linked duplicates share the mark;
 **Clear Terrain** removes it. Both rebuild the rig if there is one. Geometry
-you join into a marked mesh later is not terrain until you mark it again.
+you add to a marked mesh later becomes terrain on the next **Update Rig** (or
+Build Rig, or Mark as Terrain).
+
+**Decorations.** A terrain mesh can hold loose parts that are not connected
+to the rest: stones stuck on a wall, a ledge, a sign. The largest loose part
+of each mesh (by surface area) is the terrain itself; every other loose part
+is a decoration. A decoration does not splay on its own. Each of its vertices
+leans by the same amount as the nearest point of the terrain in the same
+mesh, so it stays on its wall: on a side wall it leans sideways with the
+wall, on a front wall or on a top it stays as modelled. Parts of equal size
+all count as terrain. To have two plateaus of different size splay on their
+own, keep them in separate objects.
 
 Wall sizes are whole tiles when Depth Right is 0 and Depth Up is above 0 (the
 Top-down preset), Level Height is a whole number of units and wall heights are
@@ -189,6 +200,11 @@ The panel warns when the result will not be what you expect:
 
 ### Limits
 
+- **Decorations around a corner.** A decoration follows the wall nearest to
+  each of its vertices. One that wraps around a wall corner is pulled two
+  ways and tears; keep decorations on one wall.
+- **Decorations from modifiers.** Parts are told apart on the mesh data, not
+  on the result of modifiers. Loose geometry a modifier adds is not marked.
 - **Ground behind a cliff.** A back wall covers `(Level Height + Back Tiles) /
   b` units of ground per level, where `b` is Depth Up / Pixels per Unit (1 with
   the Top-down preset). A plateau has to be deeper than that for its top to
@@ -260,9 +276,9 @@ non-zero):
 | Side Tiles | 1.0 | Width of a side wall per level, in tiles (0 to 8, steps of a quarter tile). 0 keeps side walls vertical. |
 | Back Tiles | 1.0 | Height of a back wall's rim per level, in tiles (0 to 8, steps of a quarter tile). 0 shows no rim. |
 | Snap to Levels | on | Round wall heights to whole levels (half up), so side and back walls are whole tiles. |
-| Mark as Terrain | | Mark the selected meshes as terrain (Object Mode). Non-mesh objects are skipped. |
+| Mark as Terrain | | Mark the selected meshes as terrain (Object Mode); loose parts other than the largest become decorations. Non-mesh objects are skipped. |
 | Clear Terrain | | Remove the mark from the selected meshes. |
-| Update Rig | | Rebuild the rig from the current settings (the same as Build Rig). |
+| Update Rig | | Rebuild the rig from the current settings (the same as Build Rig); also re-marks terrain meshes, so geometry added since is included. |
 
 Side Tiles and Back Tiles are used rounded to the nearest quarter tile (half
 up): a typed 0.7 behaves as 0.75. The five Tiles settings apply to a built

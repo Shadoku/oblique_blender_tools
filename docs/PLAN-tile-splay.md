@@ -398,3 +398,17 @@ them to an existing rig's modifier, so a change, including to 0, shows at
 once; before this a change only applied on the next rebuild, which looked
 like 0 doing nothing. The Tiles panel gets an Update Rig button (the Build
 Rig operator) for changes in other panels.
+
+**Added 2026-11-24: decorations (loose parts).** Loose parts of a marked
+mesh used to be treated as terrain of their own, so stones on a wall were
+cut by the leaning wall. Now Mark as Terrain also writes `oblique_detail`
+(BOOLEAN, true on every loose part but the largest by surface area;
+`core.splay.detail_mask`) and `oblique_mesh` (INT, one value per mesh). In
+the node group a detail vertex does not raise column tops and does not
+splay on its own: it samples the nearest point of the terrain body of its
+own mesh (Sample Nearest Surface, Group ID = `oblique_mesh`) and moves by
+that face's own `k * h` times the levels interpolated there. Sampling the
+finished vertex offsets was tried first and dropped: it skews with the quad
+triangulation. Build Rig / Update Rig re-mark every source mesh that is
+already marked, so geometry added after marking is picked up. The reference
+is `splay_offsets(..., detail=, group=)`.

@@ -307,3 +307,167 @@ def test_rejects_non_positive_level_height() -> None:
     verts, faces = box(-2, 2, 0, 3, 0, 1)
     with pytest.raises(ValueError):
         offsets(verts, faces, level_height=0.0)
+
+
+# --------------------------------------------------------------------------- loose parts (details)
+
+
+def ringed_box(x0=-2.0, x1=2.0, ys=(0.0, 1.0, 2.0, 3.0), z0=0.0, z1=1.0, offset: int = 0):
+    """A box with an edge loop at every y in ``ys``: mid-wall vertices sit on straight walls."""
+    verts, faces = [], []
+    for y in ys:
+        verts += [(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)]
+    for r in range(len(ys) - 1):
+        a, b = 4 * r, 4 * r + 4
+        faces += [
+            (a + 0, a + 1, b + 1, b + 0),  # bottom
+            (a + 1, a + 2, b + 2, b + 1),  # right, +X... wound below
+            (a + 2, a + 3, b + 3, b + 2),  # top
+            (a + 3, a + 0, b + 0, b + 3),  # left
+        ]
+    last = 4 * (len(ys) - 1)
+    faces += [(0, 3, 2, 1), (last + 0, last + 1, last + 2, last + 3)]
+    faces = [tuple(reversed(f)) for f in faces]
+    return verts, [tuple(i + offset for i in f) for f in faces]
+
+
+def tetra(centre, size: float = 0.1, offset: int = 0):
+    cx, cy, cz = centre
+    verts = [
+        (cx - size, cy - size, cz - size),
+        (cx + size, cy - size, cz - size),
+        (cx, cy + size, cz - size),
+        (cx, cy, cz + size),
+    ]
+    faces = [(0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)]
+    return verts, [tuple(i + offset for i in f) for f in faces]
+
+
+def test_ringed_box_winds_outward() -> None:
+    verts, faces = ringed_box()
+    got = offsets(verts, faces)
+    by_pos = {tuple(v): tuple(o) for v, o in zip(verts, got, strict=True)}
+    assert by_pos[(-2.0, 0.0, 0.0)] == pytest.approx((-1.0, 0.0), abs=EXACT)
+    assert by_pos[(-2.0, 1.0, 0.0)] == pytest.approx((-1.0, 0.0), abs=EXACT)
+    assert by_pos[(2.0, 3.0, 0.0)] == pytest.approx((1.0, 2.0), abs=EXACT)
+    assert by_pos[(2.0, 2.0, 1.0)] == (0.0, 0.0)
+
+
+def test_detail_mask_marks_every_part_but_the_largest() -> None:
+    verts, faces = ringed_box()
+    t_verts, t_faces = tetra((-2.1, 1.5, 0.5), offset=len(verts))
+    mask = splay.detail_mask(verts + t_verts, faces + t_faces)
+    assert mask.dtype == bool
+    assert mask.tolist() == [False] * len(verts) + [True] * 4
+
+
+def test_detail_mask_keeps_parts_of_equal_size() -> None:
+    verts, faces = box(0, 1, 0, 1, 0, 1)
+    verts2, faces2 = box(3, 4, 0, 1, 0, 1, offset=8)
+    assert not splay.detail_mask(verts + verts2, faces + faces2).any()
+
+
+def test_detail_mask_of_one_part_or_none() -> None:
+    verts, faces = box(0, 1, 0, 1, 0, 1)
+    assert not splay.detail_mask(verts, faces).any()
+    assert splay.detail_mask([], []).tolist() == []
+
+
+def test_detail_mask_counts_loose_vertices_and_edges_as_details() -> None:
+    verts, faces = box(0, 1, 0, 1, 0, 1)
+    verts = [*verts, (5.0, 5.0, 5.0), (6.0, 5.0, 5.0), (9.0, 9.0, 9.0)]
+    mask = splay.detail_mask(verts, faces, edges=[(8, 9)])
+    assert mask.tolist() == [False] * 8 + [True] * 3
+
+
+def _box_with_tetra(centre):
+    verts, faces = ringed_box()
+    t_verts, t_faces = tetra(centre, offset=len(verts))
+    detail = [False] * len(verts) + [True] * 4
+    return verts + t_verts, faces + t_faces, detail
+
+
+def test_detail_on_a_side_wall_follows_the_wall() -> None:
+    """Each detail vertex moves as the nearest point of the wall does: by ``-(1 - z)`` in x."""
+    verts, faces, detail = _box_with_tetra((-2.1, 1.5, 0.5))
+    got = offsets(verts, faces, detail=detail)
+    for vert, offset in zip(verts[-4:], got[-4:], strict=True):
+        assert offset == pytest.approx((-(1.0 - vert[2]), 0.0), abs=1e-9), vert
+    plain = offsets(*ringed_box())
+    assert got[:-4] == pytest.approx(plain, abs=EXACT), "the box itself is unchanged"
+
+
+def test_detail_without_the_mask_is_splayed_as_its_own_wall() -> None:
+    verts, faces, _ = _box_with_tetra((-2.1, 1.5, 0.5))
+    got = offsets(verts, faces)
+    assert got[-4:-1] != pytest.approx(np.full((3, 2), (-0.6, 0.0)), abs=1e-3)
+
+
+def test_detail_on_a_top_does_not_move() -> None:
+    verts, faces, detail = _box_with_tetra((0.0, 1.5, 1.1))
+    got = offsets(verts, faces, detail=detail)
+    assert got[-4:] == pytest.approx(np.zeros((4, 2)), abs=1e-9)
+
+
+def test_detail_on_a_front_wall_does_not_move() -> None:
+    """Not even sideways, although the front wall's own corners move apart."""
+    verts, faces, detail = _box_with_tetra((0.0, -0.1, 0.5))
+    got = offsets(verts, faces, detail=detail)
+    assert got[-4:] == pytest.approx(np.zeros((4, 2)), abs=1e-9)
+
+
+def test_detail_on_a_back_wall_near_a_corner_only_moves_back() -> None:
+    verts, faces, detail = _box_with_tetra((-1.7, 3.1, 0.5))
+    got = offsets(verts, faces, detail=detail)
+    for vert, offset in zip(verts[-4:], got[-4:], strict=True):
+        assert offset == pytest.approx((0.0, 2.0 * (1.0 - vert[2])), abs=1e-9), vert
+
+
+def test_detail_above_a_wall_does_not_raise_the_column() -> None:
+    verts, faces = ringed_box()
+    verts = [*verts, (-2.0, 0.0, 1.6)]  # straight above the front left corner
+    got = offsets(verts, faces, detail=[False] * (len(verts) - 1) + [True])
+    assert got[0] == pytest.approx((-1.0, 0.0), abs=EXACT)  # still 1 level, not round(1.6) = 2
+
+
+def test_detail_only_follows_its_own_group() -> None:
+    """A ground plane in another mesh is nearer to the detail, but the detail follows its own box."""
+    verts, faces, detail = _box_with_tetra((-2.2, 1.5, 0.15))
+    n = len(verts)
+    ground = [(-9.0, -9.0, 0.0), (9.0, -9.0, 0.0), (9.0, 9.0, 0.0), (-9.0, 9.0, 0.0)]
+    verts = verts + ground
+    faces = [*faces, (n, n + 1, n + 2, n + 3)]
+    detail = detail + [False] * 4
+    group = [1] * n + [2] * 4
+    got = offsets(verts, faces, detail=detail, group=group)
+    lowest = verts[n - 4]
+    assert got[n - 4] == pytest.approx((-(1.0 - lowest[2]), 0.0), abs=1e-9)
+    ungrouped = offsets(verts, faces, detail=detail)
+    assert ungrouped[n - 4] == pytest.approx((0.0, 0.0), abs=1e-9), "nearest is the flat ground"
+
+
+def test_detail_with_no_body_in_its_group_does_not_move() -> None:
+    verts, faces, detail = _box_with_tetra((-2.1, 1.5, 0.5))
+    group = [1] * (len(verts) - 4) + [7] * 4
+    got = offsets(verts, faces, detail=detail, group=group)
+    assert got[-4:] == pytest.approx(np.zeros((4, 2)), abs=EXACT)
+
+
+def test_detail_outside_the_terrain_mask_does_not_move() -> None:
+    verts, faces, detail = _box_with_tetra((-2.1, 1.5, 0.5))
+    terrain = [True] * (len(verts) - 4) + [False] * 4
+    got = offsets(verts, faces, detail=detail, terrain=terrain)
+    assert got[-4:] == pytest.approx(np.zeros((4, 2)), abs=EXACT)
+
+
+def test_detail_attribute_names() -> None:
+    assert splay.DETAIL_ATTRIBUTE == "oblique_detail"
+    assert splay.MESH_ID_ATTRIBUTE == "oblique_mesh"
+
+
+def test_mesh_id_is_a_stable_signed_32_bit_integer() -> None:
+    assert splay.mesh_id("Cube") == splay.mesh_id("Cube")
+    assert splay.mesh_id("Cube") != splay.mesh_id("Cube.001")
+    for name in ("Cube", "Cube.001", "", "Fels \u00e4"):
+        assert -(2**31) <= splay.mesh_id(name) < 2**31
+    assert any(splay.mesh_id(f"m{i}") < 0 for i in range(20))

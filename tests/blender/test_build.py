@@ -130,8 +130,8 @@ def test_node_group_layout(addon) -> None:
     def linked(a, b) -> bool:
         return any(link.from_node == a and link.to_node == b for link in ng.links)
 
-    # Collection Info -> Realize Source -> Turn -> Seat -> Store Splay -> Edge IDs switch
-    # -> Apply Splay -> Remove (splay, terrain) -> Shear -> Realize -> Output
+    # Collection Info -> Realize Source -> Turn -> Seat -> Store (levels, face direction, splay)
+    # -> Edge IDs switch -> Apply Splay -> Remove (helper attributes) -> Shear -> Realize -> Output
     out = next(n for n in ng.nodes if n.bl_idname == "NodeGroupOutput")
     realize = next(link.from_node for link in ng.links if link.to_node == out)
     assert realize.bl_idname == "GeometryNodeRealizeInstances"
@@ -142,11 +142,12 @@ def test_node_group_layout(addon) -> None:
         ng.nodes["Realize Source"],
         ng.nodes["Turn"],
         ng.nodes["Seat"],
+        ng.nodes["Store oblique_splay_levels"],
+        ng.nodes["Store oblique_splay_unit"],
         ng.nodes["Store Splay"],
         edge_switch,
         ng.nodes["Apply Splay"],
-        ng.nodes["Remove oblique_splay"],
-        ng.nodes["Remove oblique_terrain"],
+        *(ng.nodes[f"Remove {name}"] for name in addon.rig.REMOVED_ATTRIBUTES),
         transform,
         realize,
         out,

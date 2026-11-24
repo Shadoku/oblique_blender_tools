@@ -365,6 +365,19 @@ evaluated rig with `core.splay.splay_offsets` on boxes, stacks, pits,
 straight and diagonal walls, smooth and custom-normal meshes, on both
 versions.
 
+- **Sample Nearest Surface is the same node on both versions.**
+  `GeometryNodeSampleNearestSurface` has inputs `Mesh`, `Value`, `Group ID`,
+  `Sample Position`, `Sample Group ID` and outputs `Value`, `Is Valid`, with
+  `data_type` FLOAT or FLOAT_VECTOR. A FACE-domain named attribute as `Value`
+  returns the nearest face's value unblended; a POINT attribute is
+  interpolated over the face's triangles. That interpolation follows
+  Blender's own triangulation, so on a quad whose corners carry different
+  values the result depends on the diagonal: the tile splay samples a
+  per-face direction and a per-point scalar that is the same along each wall
+  base, and multiplies them, instead of sampling the finished offset vector
+  (which skewed decorations sideways on a one-quad front wall). The rig's
+  evaluated mesh matched the numpy reference within 1e-4 on both versions.
+
 ## Sources
 
 - Python API release notes: https://developer.blender.org/docs/release_notes/<version>/python_api/

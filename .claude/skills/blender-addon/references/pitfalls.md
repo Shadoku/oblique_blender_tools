@@ -193,6 +193,13 @@ binaries; same result on both unless stated.
 - **`FunctionNodeCompare.inputs`** lists every type variant on 4.5 but only
   the current type's sockets on 5.x; index access breaks one of them. Math
   `GREATER_THAN` / `LESS_THAN` into a boolean socket works on both.
+- **Sample Nearest Surface interpolates over Blender's triangulation.**
+  `GeometryNodeSampleNearestSurface` (inputs `Mesh`, `Value`, `Group ID`,
+  `Sample Position`, `Sample Group ID`; same on 4.5 and 5.2) blends a POINT
+  attribute over the nearest face's triangles, so on a quad whose corners
+  carry different values the result depends on the diagonal. A FACE attribute
+  comes back unblended. Sample values that do not depend on the diagonal and
+  combine them afterwards.
 
 ## Sources
 

@@ -14,7 +14,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy.types import Operator
 
 from . import rig
-from .core import oblique, overlap, presets, splay
+from .core import oblique, overlap, presets
 from .preferences import get_prefs
 from .properties import get_settings, params_from_settings
 
@@ -34,9 +34,10 @@ def _params_problem(params: oblique.RigParams) -> str | None:
 
 
 def build_from_settings(context: bpy.types.Context) -> bpy.types.Object:
-    """Build the rig from the scene settings and refresh the footprint and depth-sort readouts."""
+    """Build the rig from the scene settings; refresh the terrain marks and the footprint and depth-sort readouts."""
     settings = get_settings(context)
     params = params_from_settings(settings)
+    rig.refresh_terrain_marks()
     rig_object = rig.build(context.scene, params)
     update_readouts(context, rig_object)
     return rig_object
@@ -321,24 +322,6 @@ def _terrain_poll(cls: type, context: bpy.types.Context, verb: str) -> bool:
     return True
 
 
-def _mark_mesh(mesh: bpy.types.Mesh) -> None:
-    attr = mesh.attributes.get(splay.TERRAIN_ATTRIBUTE)
-    if attr is not None and (attr.domain, attr.data_type) != ("POINT", "BOOLEAN"):
-        mesh.attributes.remove(attr)
-        attr = None
-    if attr is None:
-        attr = mesh.attributes.new(splay.TERRAIN_ATTRIBUTE, "BOOLEAN", "POINT")
-    attr.data.foreach_set("value", [True] * len(attr.data))
-    mesh.update()
-
-
-def _clear_mesh(mesh: bpy.types.Mesh) -> None:
-    attr = mesh.attributes.get(splay.TERRAIN_ATTRIBUTE)
-    if attr is not None:
-        mesh.attributes.remove(attr)
-        mesh.update()
-
-
 def _run_terrain(
     op: Operator, context: bpy.types.Context, apply: Callable[[bpy.types.Mesh], None], verb: str, done: str
 ) -> set[str]:
@@ -364,8 +347,8 @@ class OBLIQUE_RIG_OT_mark_terrain(Operator):
     bl_idname = "oblique_rig.mark_terrain"
     bl_label = "Mark as Terrain"
     bl_description = (
-        "Mark the selected meshes as terrain, so Tile Splay moves their wall bases; "
-        "linked duplicates share the mark. Run again after adding geometry"
+        "Mark the selected meshes as terrain, so Tile Splay moves their wall bases; loose parts "
+        "other than the largest lean with the wall they sit on. Linked duplicates share the mark"
     )
     bl_options = {"REGISTER", "UNDO"}
 
@@ -374,7 +357,7 @@ class OBLIQUE_RIG_OT_mark_terrain(Operator):
         return _terrain_poll(cls, context, "mark")
 
     def execute(self, context: bpy.types.Context) -> set[str]:
-        return _run_terrain(self, context, _mark_mesh, "mark", "Marked {meshes} as terrain")
+        return _run_terrain(self, context, rig.mark_terrain_mesh, "mark", "Marked {meshes} as terrain")
 
 
 class OBLIQUE_RIG_OT_clear_terrain(Operator):
@@ -388,7 +371,7 @@ class OBLIQUE_RIG_OT_clear_terrain(Operator):
         return _terrain_poll(cls, context, "clear")
 
     def execute(self, context: bpy.types.Context) -> set[str]:
-        return _run_terrain(self, context, _clear_mesh, "clear", "Cleared terrain on {meshes}")
+        return _run_terrain(self, context, rig.clear_terrain_mesh, "clear", "Cleared terrain on {meshes}")
 
 
 CLASSES: tuple[type, ...] = (

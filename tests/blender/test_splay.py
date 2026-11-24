@@ -106,10 +106,10 @@ def _evaluated(addon):
 
 
 def _source_geometry(addon):
-    """World-space verts, faces (global indices) and terrain mask of every source mesh."""
+    """World-space verts, faces (global indices) and the terrain, detail and mesh id marks of every source mesh."""
     o = addon.core.oblique
     splay = addon.core.splay
-    verts, faces, terrain = [], [], []
+    verts, faces, terrain, detail, group = [], [], [], [], []
     for ob in bpy.data.collections[o.SOURCE_COLLECTION].all_objects:
         if ob.type != "MESH":
             continue
@@ -124,13 +124,23 @@ def _source_geometry(addon):
             values = [False] * len(mesh.vertices)
             attr.data.foreach_get("value", values)
             terrain += [bool(v) for v in values]
-    return np.array(verts, float), faces, np.array(terrain, bool)
+        for name, target, default in (
+            (splay.DETAIL_ATTRIBUTE, detail, False),
+            (splay.MESH_ID_ATTRIBUTE, group, 0),
+        ):
+            attr = mesh.attributes.get(name)
+            values = [default] * len(mesh.vertices)
+            if attr is not None:
+                attr.data.foreach_get("value", values)
+            target += values
+    marks = np.array(terrain, bool), np.array(detail, bool), np.array(group, np.int64)
+    return np.array(verts, float), faces, marks
 
 
 def _expected(addon, splayed: bool = True) -> np.ndarray:
     """Turn, seat, splay (core reference), shear: what the rig should evaluate to."""
     params = _params(addon)
-    verts, faces, terrain = _source_geometry(addon)
+    verts, faces, (terrain, detail, group) = _source_geometry(addon)
     c, s = math.cos(params.direction), math.sin(params.direction)
     turned = verts @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]).T
     if params.auto_seat:
@@ -146,6 +156,8 @@ def _expected(addon, splayed: bool = True) -> np.ndarray:
             params.splay_level_height,
             snap=params.splay_snap,
             terrain=terrain,
+            detail=detail,
+            group=group,
         )
         turned[:, :2] += offsets
     a, b = params.shear()
@@ -431,8 +443,101 @@ def test_edge_ids_branch_does_not_tear_and_drops_helper_attributes(addon) -> Non
     assert len(split) > len(plain), "Split Edges duplicated vertices"
     assert {tuple(round(c, 4) for c in v) for v in split} == {tuple(round(c, 4) for c in v) for v in plain}
     for names in (plain_names, split_names):
-        assert splay.SPLAY_ATTRIBUTE not in names
-        assert splay.TERRAIN_ATTRIBUTE not in names
+        assert not names & set(addon.rig.REMOVED_ATTRIBUTES), names
+        assert {splay.SPLAY_ATTRIBUTE, splay.TERRAIN_ATTRIBUTE} <= set(addon.rig.REMOVED_ATTRIBUTES)
+
+
+# --------------------------------------------------------------------------- loose parts (details)
+
+
+def _tetra(centre, size: float = 0.1):
+    cx, cy, cz = centre
+    verts = [
+        (cx - size, cy - size, cz - size),
+        (cx + size, cy - size, cz - size),
+        (cx, cy + size, cz - size),
+        (cx, cy, cz + size),
+    ]
+    return verts, [(0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)]
+
+
+def _box_with_details(addon, centres, name: str = "Terrain", mesh_id: int = 0, mark_details: bool = True):
+    """A marked 4 x 3 x 1 box with one small tetrahedron per centre in the same mesh."""
+    splay = addon.core.splay
+    verts, faces = _box(-2, 2, 0, 3, 0, 1)
+    for centre in centres:
+        t_verts, t_faces = _tetra(centre)
+        faces += [tuple(len(verts) + i for i in f) for f in t_faces]
+        verts += t_verts
+    ob = _mesh_object(addon, name, verts, faces, terrain=True)
+    mesh = ob.data
+    if mark_details:
+        attr = mesh.attributes.new(splay.DETAIL_ATTRIBUTE, "BOOLEAN", "POINT")
+        attr.data.foreach_set("value", [False] * 8 + [True] * (len(verts) - 8))
+    attr = mesh.attributes.new(splay.MESH_ID_ATTRIBUTE, "INT", "POINT")
+    attr.data.foreach_set("value", [mesh_id] * len(verts))
+    return ob
+
+
+DETAIL_CENTRES = (
+    (-2.1, 1.5, 0.5),  # left wall
+    (2.1, 0.6, 0.3),  # right wall
+    (0.5, 3.1, 0.5),  # back wall
+    (-1.7, 3.1, 0.6),  # back wall near the corner
+    (0.3, -0.1, 0.5),  # front wall
+    (0.0, 1.5, 1.1),  # top
+)
+
+
+def test_details_follow_their_wall(addon) -> None:
+    _box_with_details(addon, DETAIL_CENTRES)
+    _top_down(addon, auto_seat=False)
+    got, names = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    assert not names & set(addon.rig.REMOVED_ATTRIBUTES), names
+    # The lowest left-wall vertex (z = 0.4) leans out by 1 - 0.4 with the wall; it is not sheared (y, z) alone.
+    assert any(np.allclose(p, (-2.2 - 0.6, 1.4, 0.4 + 1.4), atol=TOL) for p in got)
+    # A front-wall detail and one on the top stay where they were modelled.
+    assert any(np.allclose(p, (0.3, 0.0, 0.4 + 0.0), atol=TOL) for p in got)
+    assert any(np.allclose(p, (0.0, 1.5, 1.2 + 1.5), atol=TOL) for p in got)
+
+
+def test_build_classifies_details_of_a_marked_mesh(addon) -> None:
+    """Only the terrain mark is set by hand; Build works out which loose parts are details."""
+    ob = _box_with_details(addon, DETAIL_CENTRES, mark_details=False)
+    _top_down(addon, auto_seat=False)
+    assert addon.core.splay.DETAIL_ATTRIBUTE in ob.data.attributes
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    assert any(np.allclose(p, (-2.2 - 0.6, 1.4, 0.4 + 1.4), atol=TOL) for p in got)
+
+
+def test_details_follow_only_their_own_mesh(addon) -> None:
+    """A separate ground plane is nearer to a detail at the wall's foot, but is another mesh."""
+    _box_with_details(addon, [(-2.2, 1.5, 0.15)], mesh_id=11)
+    splay = addon.core.splay
+    ground = _mesh_object(
+        addon, "Ground", [(-9, -9, 0), (9, -9, 0), (9, 9, 0), (-9, 9, 0)], [(0, 1, 2, 3)], terrain=True
+    )
+    attr = ground.data.attributes.new(splay.MESH_ID_ATTRIBUTE, "INT", "POINT")
+    attr.data.foreach_set("value", [22] * 4)
+    _top_down(addon, auto_seat=False)
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    assert any(np.allclose(p, (-2.3 - 0.95, 1.4, 0.05 + 1.4), atol=TOL) for p in got)
+
+
+def test_details_follow_with_direction_and_edge_ids(addon) -> None:
+    _box_with_details(addon, DETAIL_CENTRES)
+    _top_down(addon, direction=math.radians(90))
+    plain, _ = _evaluated(addon)
+    _assert_same_points(plain, _expected(addon))
+    mod = _modifier(addon)
+    addon.rig.set_modifier_input(mod, "Edge IDs", True)
+    mod.id_data.update_tag()
+    split, names = _evaluated(addon)
+    assert {tuple(round(c, 4) for c in v) for v in split} == {tuple(round(c, 4) for c in v) for v in plain}
+    assert not names & set(addon.rig.REMOVED_ATTRIBUTES), names
 
 
 def test_fit_includes_the_splayed_base(addon) -> None:
