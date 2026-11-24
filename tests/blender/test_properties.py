@@ -42,6 +42,11 @@ DEFAULTS = {
     "outline_color": (0.0, 0.0, 0.0, 1.0),
     "crease_angle": math.radians(30),
     "edge_marked_sharp": True,
+    "splay_enabled": False,
+    "splay_level_height": 1.0,
+    "splay_side_tiles": 1,
+    "splay_back_tiles": 1,
+    "splay_snap": True,
     "last_footprint": "",
     "last_warnings": "",
 }
@@ -61,6 +66,9 @@ MINIMUMS = {
     "outline_outer_px": 0,
     "outline_inner_px": 0,
     "crease_angle": 0.0,
+    "splay_level_height": 0.0625,
+    "splay_side_tiles": 0,
+    "splay_back_tiles": 0,
 }
 
 MAXIMUMS = {
@@ -68,6 +76,8 @@ MAXIMUMS = {
     "outline_outer_px": 8,
     "outline_inner_px": 8,
     "crease_angle": math.pi,
+    "splay_side_tiles": 8,
+    "splay_back_tiles": 8,
 }
 
 TYPES = {
@@ -82,6 +92,8 @@ TYPES = {
         "grid_extent",
         "outline_outer_px",
         "outline_inner_px",
+        "splay_side_tiles",
+        "splay_back_tiles",
     },
     "FLOAT": {
         "slope_run",
@@ -93,6 +105,7 @@ TYPES = {
         "grid_color",
         "outline_color",
         "crease_angle",
+        "splay_level_height",
     },
     "BOOLEAN": {
         "pixel_exact",
@@ -107,6 +120,8 @@ TYPES = {
         "outline_enabled",
         "outline_corners",
         "edge_marked_sharp",
+        "splay_enabled",
+        "splay_snap",
     },
     "STRING": {"output_dir", "output_name", "last_footprint", "last_warnings"},
     "ENUM": {"view_mode", "outline_position", "inner_lines"},
@@ -161,6 +176,20 @@ def test_subtypes(addon) -> None:
         assert (rna[name].hard_min, rna[name].hard_max) == pytest.approx((0.0, 1.0))
 
 
+def test_splay_panel_names(addon) -> None:
+    rna = addon.properties.OBLIQUE_RIG_Settings.bl_rna.properties
+    names = {
+        "splay_enabled": "Tile Splay",
+        "splay_level_height": "Level Height",
+        "splay_side_tiles": "Side Tiles",
+        "splay_back_tiles": "Back Tiles",
+        "splay_snap": "Snap to Levels",
+    }
+    for identifier, name in names.items():
+        assert rna[identifier].name == name
+        assert rna[identifier].description, identifier
+
+
 def test_output_dir_accepts_blend_relative_paths(addon) -> None:
     """Without PATH_SUPPORTS_BLEND_RELATIVE, assigning "//..." prints a RuntimeWarning."""
     rna = addon.properties.OBLIQUE_RIG_Settings.bl_rna.properties
@@ -202,6 +231,11 @@ def test_params_from_settings(addon) -> None:
     settings.view_mode = "SOURCE"
     settings.crease_angle = math.radians(45)
     settings.edge_marked_sharp = False
+    settings.splay_enabled = True
+    settings.splay_level_height = 2.0
+    settings.splay_side_tiles = 3
+    settings.splay_back_tiles = 0
+    settings.splay_snap = False
     params = addon.properties.params_from_settings(settings)
     assert isinstance(params, addon.core.oblique.RigParams)
     assert params.pixel_exact is False
@@ -212,6 +246,10 @@ def test_params_from_settings(addon) -> None:
     assert params.view_mode == "SOURCE"
     assert params.crease_angle == pytest.approx(math.radians(45))
     assert params.edge_marked_sharp is False
+    assert params.splay_enabled is True
+    assert params.splay_level_height == pytest.approx(2.0)
+    assert (params.splay_side_tiles, params.splay_back_tiles) == (3, 0)
+    assert params.splay_snap is False
 
 
 def test_reset_restores_every_default(addon) -> None:
@@ -220,9 +258,17 @@ def test_reset_restores_every_default(addon) -> None:
     settings.grid_color = (1.0, 1.0, 1.0, 1.0)
     settings.output_name = "x"
     settings.last_warnings = "A / B"
+    settings.splay_enabled = True
+    settings.splay_level_height = 3.0
+    settings.splay_side_tiles = 5
+    settings.splay_snap = False
     for prop in settings.bl_rna.properties:
         if prop.identifier != "rna_type":
             settings.property_unset(prop.identifier)
     assert tuple(settings.grid_color) == pytest.approx(DEFAULTS["grid_color"])
     assert settings.output_name == "guide"
     assert settings.last_warnings == ""
+    assert settings.splay_enabled is False
+    assert settings.splay_level_height == pytest.approx(1.0)
+    assert settings.splay_side_tiles == 1
+    assert settings.splay_snap is True

@@ -143,6 +143,41 @@ class OBLIQUE_RIG_Settings(PropertyGroup):
         min=0.0,
         soft_max=2.0,
     )
+    # ------------------------------------------------------------------ tiles (wall splay)
+    splay_enabled: BoolProperty(
+        name="Tile Splay",
+        description=(
+            "Move the wall bases of meshes marked as terrain outward, so side walls get width "
+            "and back walls show a rim, as in top-down tilesets. Needs Depth Up above 0"
+        ),
+        default=False,
+    )
+    splay_level_height: FloatProperty(
+        name="Level Height",
+        description="Wall height in units that counts as one level; side and back walls splay per level",
+        default=1.0,
+        min=0.0625,
+        soft_max=8.0,
+    )
+    splay_side_tiles: IntProperty(
+        name="Side Tiles",
+        description="Width in tiles of a side wall, per level",
+        default=1,
+        min=0,
+        max=8,
+    )
+    splay_back_tiles: IntProperty(
+        name="Back Tiles",
+        description="Height in tiles of the rim a back wall shows above the top, per level",
+        default=1,
+        min=0,
+        max=8,
+    )
+    splay_snap: BoolProperty(
+        name="Snap to Levels",
+        description="Round wall heights to whole levels, so side and back walls are whole tiles",
+        default=True,
+    )
     # ------------------------------------------------------------------ direction
     direction: FloatProperty(
         name="Direction",
@@ -344,6 +379,11 @@ def params_from_settings(settings: OBLIQUE_RIG_Settings) -> RigParams:
         view_mode=settings.view_mode,
         crease_angle=settings.crease_angle,
         edge_marked_sharp=settings.edge_marked_sharp,
+        splay_enabled=settings.splay_enabled,
+        splay_level_height=settings.splay_level_height,
+        splay_side_tiles=settings.splay_side_tiles,
+        splay_back_tiles=settings.splay_back_tiles,
+        splay_snap=settings.splay_snap,
     )
 
 

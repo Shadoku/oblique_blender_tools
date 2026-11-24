@@ -377,3 +377,13 @@ memory. Corrections and additions:
 
 **Open questions, decided for 0.4:** Back Tiles stays a whole number; no
 "As Terrain" option on Add Selected to Rig.
+
+**Changed 2026-11-24, after review: half tiles.** Side Tiles and Back Tiles
+allow half tiles. Both become Float properties (`splay_side_tiles`,
+`splay_back_tiles`, default 1.0, 0 to 8, UI step 0.5, one decimal), and
+`RigParams.splay()` rounds each to the nearest half tile (half up) before
+use, so a typed 0.7 behaves as 0.5 and the result is always predictable. The
+readout shows the rounded values in pixels. A half tile is a whole number of
+pixels only when Pixels per Unit is even; the Tiles panel warns "Half tiles
+need an even Pixels per Unit" otherwise. This replaces the Int entries in the
+section 4 table and the first open question of section 11.

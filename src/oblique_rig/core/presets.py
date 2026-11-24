@@ -38,6 +38,8 @@ SLOPE_PRESETS: tuple[SlopePreset, ...] = (
     SlopePreset("PIXEL_1_1", "1:1", 0.5, 0.5),
     SlopePreset("PIXEL_3_2", "3:2", 0.75, 0.5),
     SlopePreset("PIXEL_1_2", "1:2 (steep)", 0.5, 1.0),
+    # Depth straight up, one pixel per pixel: the base for top-down tilesets (Tile Splay).
+    SlopePreset("TOP_DOWN", "Top-down", 0.0, 1.0),
 )
 
 RESOLUTION_PRESETS: tuple[ResolutionPreset, ...] = (

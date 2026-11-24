@@ -178,6 +178,11 @@ def make_params(**overrides) -> "oblique.RigParams":
         "view_mode": "SHEARED",
         "crease_angle": math.radians(30),
         "edge_marked_sharp": True,
+        "splay_enabled": False,
+        "splay_level_height": 1.0,
+        "splay_side_tiles": 1,
+        "splay_back_tiles": 1,
+        "splay_snap": True,
     }
     values.update(overrides)
     return oblique.RigParams(**values)
@@ -192,6 +197,59 @@ def test_rig_params_edge_defaults() -> None:
     params = oblique.RigParams(pixels_per_unit=8)
     assert params.crease_angle == pytest.approx(math.radians(30))
     assert params.edge_marked_sharp is True
+
+
+def test_rig_params_splay_defaults() -> None:
+    """0.4 fields are defaulted, so constructors written for 0.3 keep working."""
+    params = oblique.RigParams(pixels_per_unit=8)
+    assert params.splay_enabled is False
+    assert params.splay_level_height == 1.0
+    assert (params.splay_side_tiles, params.splay_back_tiles) == (1, 1)
+    assert params.splay_snap is True
+
+
+def top_down(**overrides) -> "oblique.RigParams":
+    values = {"splay_enabled": True, "depth_px_right": 0, "depth_px_up": 16}
+    values.update(overrides)
+    return make_params(**values)
+
+
+def test_splay_defaults_at_top_down() -> None:
+    assert top_down().splay() == (1.0, 2.0)
+
+
+def test_splay_disabled_is_zero() -> None:
+    assert top_down(splay_enabled=False).splay() == (0.0, 0.0)
+
+
+def test_splay_disabled_does_not_raise_on_a_bad_shear() -> None:
+    """Tile Splay off must not compute the shear (both depth steps 0 raise there)."""
+    assert make_params(depth_px_right=0, depth_px_up=0).splay() == (0.0, 0.0)
+
+
+def test_splay_without_depth_up_is_zero() -> None:
+    assert top_down(depth_px_right=16, depth_px_up=0).splay() == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"splay_side_tiles": 2, "splay_back_tiles": 0}, (2.0, 1.0)),
+        ({"splay_level_height": 2.0, "splay_back_tiles": 1}, (1.0, 3.0)),
+        ({"depth_px_up": 8}, (1.0, 4.0)),  # b = 0.5: back = (1 + 1) / 0.5
+        ({"depth_px_right": 16}, (1.0, 2.0)),  # Depth Right does not change the plan offsets
+        ({"pixels_per_unit": 32}, (1.0, 4.0)),  # b = 16 / 32
+    ],
+)
+def test_splay_offsets_per_level(overrides: dict, expected: tuple[float, float]) -> None:
+    side, back = top_down(**overrides).splay()
+    assert (side, back) == pytest.approx(expected, abs=1e-12)
+    assert isinstance(side, float) and isinstance(back, float)
+
+
+def test_splay_in_float_mode_uses_the_slope_shear() -> None:
+    params = top_down(pixel_exact=False, slope_run=0.0, slope_rise=1.0, depth_scale=0.5)
+    assert params.splay() == pytest.approx((1.0, 4.0))
 
 
 def test_rig_params_is_frozen() -> None:

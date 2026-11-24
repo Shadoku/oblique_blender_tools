@@ -22,7 +22,9 @@ def test_resolution_enum_lists_core_presets(addon) -> None:
     ]
 
 
-@pytest.mark.parametrize("preset", ["PIXEL_2_1", "CABINET_2_1", "PIXEL_1_1", "PIXEL_3_2", "PIXEL_1_2"])
+@pytest.mark.parametrize(
+    "preset", ["PIXEL_2_1", "CABINET_2_1", "PIXEL_1_1", "PIXEL_3_2", "PIXEL_1_2", "TOP_DOWN"]
+)
 def test_apply_slope_preset(addon, preset) -> None:
     settings = _settings(addon)
     settings.pixel_exact = False

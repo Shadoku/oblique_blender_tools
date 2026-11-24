@@ -31,6 +31,7 @@ def test_slope_preset_table() -> None:
         "PIXEL_1_1": ("1:1", 0.5, 0.5),
         "PIXEL_3_2": ("3:2", 0.75, 0.5),
         "PIXEL_1_2": ("1:2 (steep)", 0.5, 1.0),
+        "TOP_DOWN": ("Top-down", 0.0, 1.0),
     }
     assert presets.SLOPE_PRESETS[0].identifier == "PIXEL_2_1"
 
@@ -54,6 +55,8 @@ def test_presets_unpack_as_plain_tuples() -> None:
         ("CABINET_2_1", 2, (1, 1)),  # 0.5 rounds up, never to zero
         ("CABINET_2_1", 1, (1, 1)),  # non-zero fractions keep at least one pixel
         ("PIXEL_3_2", 10, (8, 5)),  # 7.5 rounds half up
+        ("TOP_DOWN", 16, (0, 16)),  # depth straight up: no sideways shift
+        ("TOP_DOWN", 8, (0, 8)),
     ],
 )
 def test_slope_preset(identifier: str, ppu: int, expected: tuple[int, int]) -> None:

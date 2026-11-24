@@ -232,6 +232,35 @@ class RigParams:
     """Sharp-edge outlines: edges whose faces meet at more than this (radians) get a line."""
     edge_marked_sharp: bool = True
     """Sharp-edge outlines: edges marked sharp (the ``sharp_edge`` attribute) also get a line."""
+    splay_enabled: bool = False
+    """Tile Splay: move wall bases of terrain meshes outward in plan (see ``core.splay``)."""
+    splay_level_height: float = 1.0
+    """Tile Splay: units of wall height per level."""
+    splay_side_tiles: int = 1
+    """Tile Splay: tiles of side wall width per level."""
+    splay_back_tiles: int = 1
+    """Tile Splay: tiles of back rim height per level."""
+    splay_snap: bool = True
+    """Tile Splay: round levels half up to whole numbers."""
+
+    def splay(self) -> tuple[float, float]:
+        """Plan offsets per level ``(side, back)`` for ``core.splay.splay_offsets`` and the node group.
+
+        ``side = splay_side_tiles`` and ``back = (splay_level_height + splay_back_tiles) / b``
+        with ``b`` from :meth:`shear`: a back wall base first has to clear the
+        top's back edge on screen, then show the rim. ``(0.0, 0.0)`` when Tile
+        Splay is off (without computing the shear) or ``b`` is 0; zero offsets
+        are how the node group is switched off.
+
+        Raises:
+            ValueError: only with Tile Splay on, as :meth:`shear`.
+        """
+        if not self.splay_enabled:
+            return 0.0, 0.0
+        _, b = self.shear()
+        if b <= 0:
+            return 0.0, 0.0
+        return float(self.splay_side_tiles), (self.splay_level_height + self.splay_back_tiles) / b
 
     def shear(self) -> tuple[float, float]:
         """Shear coefficients ``(a, b)``: units moved right and up per unit of depth.
