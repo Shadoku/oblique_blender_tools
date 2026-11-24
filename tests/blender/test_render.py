@@ -395,3 +395,92 @@ def test_operators_write_files_not_scene_data(addon) -> None:
         "oblique_rig.render_turnaround",
     }
     assert {cls.bl_label for cls in ops.CLASSES} == {"Render Guides", "Render Turnaround"}
+
+
+# --------------------------------------------------------------------------- tile splay
+
+SPLAY_COLORS = {
+    "top": (0.8, 0.8, 0.2, 1.0),
+    "front": (0.2, 0.3, 0.8, 1.0),
+    "side": (0.8, 0.2, 0.2, 1.0),
+    "back": (0.2, 0.7, 0.3, 1.0),
+    "bottom": (0.5, 0.5, 0.5, 1.0),
+}
+
+
+def _splay_box(addon) -> None:
+    """A 2 x 1 x 1 terrain box (x -1..1, y 0..1), one material per face direction."""
+    verts = [(-1, 0, 0), (1, 0, 0), (1, 1, 0), (-1, 1, 0), (-1, 0, 1), (1, 0, 1), (1, 1, 1), (-1, 1, 1)]
+    faces = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    kinds = ["bottom", "top", "front", "side", "back", "side"]
+    mesh = bpy.data.meshes.new("Splay Box")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    names = list(SPLAY_COLORS)
+    for name in names:
+        mat = bpy.data.materials.new(f"Splay {name}")
+        mat.diffuse_color = SPLAY_COLORS[name]
+        mesh.materials.append(mat)
+    for polygon, kind in zip(mesh.polygons, kinds, strict=True):
+        polygon.material_index = names.index(kind)
+    attr = mesh.attributes.new(addon.core.splay.TERRAIN_ATTRIBUTE, "BOOLEAN", "POINT")
+    attr.data.foreach_set("value", [True] * len(verts))
+    ob = bpy.data.objects.new("Splay Box", mesh)
+    addon.rig.get_or_create_collection(bpy.context.scene).objects.link(ob)
+
+
+def test_splayed_box_flat_pass_shows_side_wall_and_back_rim(addon, tmp_path) -> None:
+    """Top-down at 16 px per unit, one level: side walls 16 px wide, back rim 16 px tall.
+
+    The top is 2 x 1 units (32 x 16 px). Splayed, the base spans x -2..2 and the
+    back base sits 2 units behind the box, so Fit with no padding frames it in
+    exactly 64 x 48 px.
+    """
+    settings = addon.properties.get_settings(bpy.context)
+    _reset_settings(settings)
+    settings.pixels_per_unit = 16
+    settings.pixel_exact = True
+    settings.depth_px_right = 0
+    settings.depth_px_up = 16
+    settings.splay_enabled = True
+    settings.output_dir = str(tmp_path)
+    settings.output_name = "splay"
+    for key in (
+        "pass_shaded",
+        "pass_ids",
+        "pass_silhouette",
+        "pass_composite",
+        "outline_enabled",
+        "grid_enabled",
+    ):
+        setattr(settings, key, False)
+    settings.pass_flat = True
+    assert bpy.ops.oblique_rig.build() == {"FINISHED"}
+    _splay_box(addon)
+    assert bpy.ops.oblique_rig.fit_to_content(padding_px=0) == {"FINISHED"}
+    assert (settings.resolution_x, settings.resolution_y) == (64, 48)
+    assert bpy.ops.oblique_rig.render_guides() == {"FINISHED"}
+
+    flat = addon.render.read_rgba(str(tmp_path / "splay_flat.png"))
+    assert flat.shape == (48, 64, 4)
+    assert (flat[..., 3] == 255).all(), "the splayed box fills the frame"
+    expected = {name: tuple(_srgb_byte(c) for c in color[:3]) for name, color in SPLAY_COLORS.items()}
+
+    def mask(name: str) -> np.ndarray:
+        return np.array([[_close(px[:3], expected[name], 2) for px in row] for row in flat])
+
+    top, side, back, front = mask("top"), mask("side"), mask("back"), mask("front")
+    assert (top | side | back | front).all(), "every pixel is one of the four visible face colours"
+    assert top.sum() == 32 * 16
+
+    rows = np.flatnonzero(top.any(axis=1))
+    columns = np.flatnonzero(top.any(axis=0))
+    assert rows.tolist() == list(range(16, 32)), "top between z = 1 and 2 (row 0 at the bottom)"
+    assert columns.tolist() == list(range(16, 48))
+    for row in rows:
+        assert side[row, :16].all() and side[row, 48:].all(), f"row {row}: 16 px of side wall each side"
+        assert side[row].sum() == 32
+    for column in columns:
+        assert back[32:, column].all(), f"column {column}: 16 px of back rim above the top"
+        assert back[:, column].sum() == 16
+        assert front[:16, column].all() and front[:, column].sum() == 16, "front wall 16 px tall"

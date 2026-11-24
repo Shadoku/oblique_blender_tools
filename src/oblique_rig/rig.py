@@ -20,6 +20,13 @@ API differences between Blender 4.5 LTS and 5.x handled here:
   an active ``core.edge_ids.EDGE_ID_ATTRIBUTE``, and the Edge IDs branch puts
   it first before realizing (see ``build_shear_nodegroup`` and
   ``ensure_edge_id_helper``).
+- Remove Named Attribute's pattern mode is a node property
+  (``node.pattern_mode``) in 4.5 and a menu input socket in 5.x; the rig
+  leaves it at its default (exact names), so it sets neither.
+
+The tile splay (``core.splay``) is computed in the node group with nodes both
+versions share: Normal's True Normal output, Evaluate on Domain, Field Min &
+Max with a Group ID from Hash Value (see ``_add_splay_field``).
 
 ``build`` takes a ``core.oblique.RigParams`` (see ``properties.params_from_settings``)
 and never reads the PropertyGroup itself, so the render code can rebuild or
@@ -33,7 +40,7 @@ from typing import Any
 import bpy
 from mathutils import Vector
 
-from .core import edge_ids, oblique, primitives
+from .core import edge_ids, oblique, primitives, splay
 from .core.oblique import (
     CALIB_BACK,
     CALIB_FLOOR,
@@ -160,7 +167,7 @@ def get_or_create_collection(scene: bpy.types.Scene, name: str = SOURCE_COLLECTI
 
 
 def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
-    """(Re)build the Geometry Nodes group that pulls in a collection, turns, seats and shears it.
+    """(Re)build the Geometry Nodes group that pulls in a collection, turns, seats, splays and shears it.
 
     Collection Info -> Realize Instances -> Transform (rotation Z = Direction)
     -> Transform (translation = Auto Seat ? seat offset : 0) -> Transform
@@ -179,8 +186,20 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     :func:`_add_edge_id_branch`). Edge angles are measured there, before the
     shear changes them.
 
+    Tile splay wraps that switch: Seat -> Store Named Attribute
+    ``core.splay.SPLAY_ATTRIBUTE`` (point, the offset field of
+    :func:`_add_splay_field`) -> [Edge IDs switch] -> Set Position (Offset =
+    that attribute) -> Remove Named Attribute ``SPLAY_ATTRIBUTE`` and
+    ``core.splay.TERRAIN_ATTRIBUTE`` -> Shear. Storing before the branch
+    matters: Split Edges copies a point attribute to every duplicate, so the
+    split mesh moves as one piece, and crease angles stay measured on the
+    unsplayed source. Splay Side and Splay Back are the plan offsets per
+    level from ``RigParams.splay()``; both 0 (the default) switch the splay
+    off, as does a source without terrain.
+
     Input order: Geometry, Source Collection, Slope Run, Slope Rise, Depth Scale,
-    Direction, Auto Seat, Edge IDs, Crease Angle, Marked Sharp.
+    Direction, Auto Seat, Edge IDs, Crease Angle, Marked Sharp, Splay Side,
+    Splay Back, Level Height, Splay Snap.
     """
     ng = bpy.data.node_groups.get(name)
     if ng is None:
@@ -200,6 +219,10 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     s_edges = iface.new_socket("Edge IDs", in_out="INPUT", socket_type="NodeSocketBool")
     s_crease = iface.new_socket("Crease Angle", in_out="INPUT", socket_type="NodeSocketFloat")
     s_marked = iface.new_socket("Marked Sharp", in_out="INPUT", socket_type="NodeSocketBool")
+    s_side = iface.new_socket("Splay Side", in_out="INPUT", socket_type="NodeSocketFloat")
+    s_back = iface.new_socket("Splay Back", in_out="INPUT", socket_type="NodeSocketFloat")
+    s_level = iface.new_socket("Level Height", in_out="INPUT", socket_type="NodeSocketFloat")
+    s_snap = iface.new_socket("Splay Snap", in_out="INPUT", socket_type="NodeSocketBool")
     iface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     s_run.default_value = 2.0
     s_rise.default_value = 1.0
@@ -216,6 +239,11 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     s_crease.min_value = 0.0
     s_crease.max_value = math.pi
     s_marked.default_value = True
+    s_side.default_value = s_back.default_value = 0.0
+    s_side.min_value = s_back.min_value = 0.0
+    s_level.default_value = 1.0
+    s_level.min_value = 0.0001
+    s_snap.default_value = True
 
     nodes, links = ng.nodes, ng.links
 
@@ -307,18 +335,262 @@ def build_shear_nodegroup(name: str = NODEGROUP_NAME) -> bpy.types.NodeTree:
     links.new(n_sep.outputs["X"], n_mat.inputs[1 * 4 + 0])
     links.new(n_sep.outputs["Y"], n_mat.inputs[1 * 4 + 2])
 
+    # Tile splay: store the offset per point before the Edge IDs branch (Split Edges copies
+    # it to every duplicate), apply it after, then drop both helper attributes.
+    n_store_splay = add("GeometryNodeStoreNamedAttribute", 550, 200, "Store Splay")
+    n_store_splay.data_type = "FLOAT_VECTOR"
+    n_store_splay.domain = "POINT"
+    n_store_splay.inputs["Name"].default_value = splay.SPLAY_ATTRIBUTE
+    links.new(n_seat.outputs["Geometry"], n_store_splay.inputs["Geometry"])
+    links.new(_add_splay_field(ng, n_in, add), n_store_splay.inputs["Value"])
+    seated = n_store_splay.outputs["Geometry"]
+
     n_edge_switch = add("GeometryNodeSwitch", 650, 200, "Edge IDs")
     n_edge_switch.input_type = "GEOMETRY"
     links.new(n_in.outputs["Edge IDs"], n_edge_switch.inputs["Switch"])
-    links.new(n_seat.outputs["Geometry"], n_edge_switch.inputs["False"])
-    edge_ids_out = _add_edge_id_branch(ng, n_in, n_seat.outputs["Geometry"], add)
+    links.new(seated, n_edge_switch.inputs["False"])
+    edge_ids_out = _add_edge_id_branch(ng, n_in, seated, add)
     links.new(edge_ids_out, n_edge_switch.inputs["True"])
 
-    links.new(n_edge_switch.outputs[0], n_xform.inputs["Geometry"])
+    n_splay_read = add("GeometryNodeInputNamedAttribute", 650, 0, "Splay Offset")
+    n_splay_read.data_type = "FLOAT_VECTOR"
+    n_splay_read.inputs["Name"].default_value = splay.SPLAY_ATTRIBUTE
+    n_apply = add("GeometryNodeSetPosition", 700, 200, "Apply Splay")
+    links.new(n_edge_switch.outputs[0], n_apply.inputs["Geometry"])
+    links.new(n_splay_read.outputs["Attribute"], n_apply.inputs["Offset"])
+    geometry = n_apply.outputs["Geometry"]
+    for index, attribute in enumerate((splay.SPLAY_ATTRIBUTE, splay.TERRAIN_ATTRIBUTE)):
+        n_remove = add("GeometryNodeRemoveAttribute", 750 + 30 * index, 200, f"Remove {attribute}")
+        n_remove.inputs["Name"].default_value = attribute
+        links.new(geometry, n_remove.inputs["Geometry"])
+        geometry = n_remove.outputs["Geometry"]
+
+    links.new(geometry, n_xform.inputs["Geometry"])
     links.new(n_mat.outputs["Matrix"], n_xform.inputs["Transform"])
     links.new(n_xform.outputs["Geometry"], n_realize.inputs["Geometry"])
     links.new(n_realize.outputs["Geometry"], n_out.inputs["Geometry"])
     return ng
+
+
+def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> bpy.types.NodeSocket:
+    """Nodes for the tile splay offset field of ``core.splay.splay_offsets``; return its vector socket.
+
+    Evaluated on the point domain of the seated geometry (Store Named
+    Attribute). Same rule and same two solve branches as the core reference:
+
+    1. *Face terms.* From each face's True Normal ``n`` (the geometric normal;
+       the Normal output follows custom normals even on the face domain), the
+       least-squares terms ``w*h*h^T = (nx^2, nx*ny, ny^2)`` and
+       ``w*k*h = hypot(side*nx, back*max(ny, 0)) * (nx, ny)``, which need no
+       division. Faces with ``w = nx^2 + ny^2 < 1e-12`` (floors, tops) count 0.
+    2. *Per vertex.* Evaluate on Domain (FACE) read on the point domain is the
+       plain mean over the adjacent faces. Both solve branches divide two of
+       these sums, so the face count cancels.
+    3. *Solve.* ``rhs / trace`` where ``det < RANK_EPS * trace^2`` (parallel
+       walls), else ``adj @ rhs / det``; zero where ``trace`` is 0.
+    4. *Levels.* Column top minus z over Level Height, rounded half up when
+       Splay Snap is on. The column top is Field Min & Max (Max) of z grouped
+       by the plan position quantised to ``XY_QUANT``. Non-terrain points feed
+       -1e9 so a prop above terrain does not raise the column, and get 0
+       levels. Group ID is Hash Value of the two quantised integers; it is
+       evaluated twice with the integers swapped and the smaller maximum
+       taken, so only a collision in both hashes could merge two columns.
+    5. *Mask.* ``core.splay.TERRAIN_ATTRIBUTE`` as a BOOLEAN named attribute
+       (a missing attribute reads false).
+    """
+    links = ng.links
+    x, y = -1150, -1000
+
+    def math_node(operation: str, a, b=None, px: float = 0, py: float = 0, name: str | None = None):
+        node = add("ShaderNodeMath", px, py, name)
+        node.operation = operation
+        for index, value in enumerate((a, b)):
+            if value is None:
+                continue
+            if isinstance(value, int | float):
+                node.inputs[index].default_value = float(value)
+            else:
+                links.new(value, node.inputs[index])
+        return node.outputs[0]
+
+    def combine(px, py, cx, cy, cz=None, name=None):
+        node = add("ShaderNodeCombineXYZ", px, py, name)
+        for index, value in enumerate((cx, cy, cz)):
+            if value is None:
+                node.inputs[index].default_value = 0.0
+            else:
+                links.new(value, node.inputs[index])
+        return node.outputs[0]
+
+    def separate(socket, px, py):
+        node = add("ShaderNodeSeparateXYZ", px, py)
+        links.new(socket, node.inputs[0])
+        return node.outputs["X"], node.outputs["Y"], node.outputs["Z"]
+
+    def switch(input_type: str, condition, false, true, px, py, name=None):
+        node = add("GeometryNodeSwitch", px, py, name)
+        node.input_type = input_type
+        links.new(condition, node.inputs["Switch"])
+        for key, value in (("False", false), ("True", true)):
+            if isinstance(value, int | float | tuple):
+                node.inputs[key].default_value = value
+            else:
+                links.new(value, node.inputs[key])
+        return node.outputs[0]
+
+    # 1. Face terms.
+    n_normal = add("GeometryNodeInputNormal", x, y, "Face Normal")
+    nx, ny, _ = separate(n_normal.outputs["True Normal"], x + 150, y)
+    w = math_node(
+        "ADD",
+        math_node("MULTIPLY", nx, nx, x + 300, y + 100),
+        math_node("MULTIPLY", ny, ny, x + 300, y),
+        x + 450,
+        y + 100,
+        "Wall Weight",
+    )
+    is_wall = math_node("GREATER_THAN", w, 1e-12, x + 600, y + 100, "Is Wall")
+    terms = combine(
+        x + 600,
+        y - 100,
+        math_node("MULTIPLY", nx, nx, x + 450, y - 50),
+        math_node("MULTIPLY", nx, ny, x + 450, y - 150),
+        math_node("MULTIPLY", ny, ny, x + 450, y - 250),
+        "Normal Terms",
+    )
+    k_vec = combine(
+        x + 600,
+        y - 400,
+        math_node("MULTIPLY", nx, n_in.outputs["Splay Side"], x + 450, y - 350),
+        math_node(
+            "MULTIPLY",
+            math_node("MAXIMUM", ny, 0.0, x + 300, y - 450),
+            n_in.outputs["Splay Back"],
+            x + 450,
+            y - 450,
+        ),
+    )
+    n_k = add("ShaderNodeVectorMath", x + 750, y - 400, "Wall Splay")
+    n_k.operation = "LENGTH"
+    links.new(k_vec, n_k.inputs[0])
+    k_masked = math_node("MULTIPLY", n_k.outputs["Value"], is_wall, x + 900, y - 400)
+    n_rhs = add("ShaderNodeVectorMath", x + 1050, y - 300, "Target Terms")
+    n_rhs.operation = "SCALE"
+    links.new(combine(x + 900, y - 250, nx, ny), n_rhs.inputs[0])
+    links.new(k_masked, n_rhs.inputs["Scale"])
+    n_terms = add("ShaderNodeVectorMath", x + 900, y - 100, "Masked Terms")
+    n_terms.operation = "SCALE"
+    links.new(terms, n_terms.inputs[0])
+    links.new(is_wall, n_terms.inputs["Scale"])
+
+    # 2. Per vertex: the face terms averaged onto points.
+    face_means = []
+    for index, socket in enumerate((n_terms.outputs[0], n_rhs.outputs[0])):
+        n_eval = add("GeometryNodeFieldOnDomain", x + 1250, y - 100 - 200 * index, "Face Terms")
+        n_eval.domain = "FACE"
+        n_eval.data_type = "FLOAT_VECTOR"
+        links.new(socket, n_eval.inputs[0])
+        face_means.append(n_eval.outputs[0])
+    axx, axy, ayy = separate(face_means[0], x + 1450, y - 100)
+    rx, ry, _ = separate(face_means[1], x + 1450, y - 300)
+
+    # 3. Solve.
+    sx = x + 1650
+    trace = math_node("ADD", axx, ayy, sx, y, "Trace")
+    det = math_node(
+        "SUBTRACT",
+        math_node("MULTIPLY", axx, ayy, sx, y - 100),
+        math_node("MULTIPLY", axy, axy, sx, y - 200),
+        sx + 150,
+        y - 150,
+        "Det",
+    )
+    threshold = math_node(
+        "MULTIPLY", math_node("MULTIPLY", trace, trace, sx + 150, y), splay.RANK_EPS, sx + 300, y
+    )
+    # Math compare (1.0 / 0.0) into the boolean Switch socket: Compare node sockets differ between versions.
+    parallel = math_node("LESS_THAN", det, threshold, sx + 450, y, "Parallel Walls")
+    inv_trace = math_node("DIVIDE", 1.0, trace, sx + 300, y - 300)
+    unit_parallel = combine(
+        sx + 600,
+        y - 300,
+        math_node("MULTIPLY", rx, inv_trace, sx + 450, y - 300),
+        math_node("MULTIPLY", ry, inv_trace, sx + 450, y - 400),
+    )
+    full_x = math_node(
+        "SUBTRACT",
+        math_node("MULTIPLY", ayy, rx, sx + 150, y - 500),
+        math_node("MULTIPLY", axy, ry, sx + 150, y - 600),
+        sx + 300,
+        y - 550,
+    )
+    full_y = math_node(
+        "SUBTRACT",
+        math_node("MULTIPLY", axx, ry, sx + 150, y - 700),
+        math_node("MULTIPLY", axy, rx, sx + 150, y - 800),
+        sx + 300,
+        y - 750,
+    )
+    unit_full = combine(
+        sx + 600,
+        y - 600,
+        math_node("DIVIDE", full_x, det, sx + 450, y - 550),
+        math_node("DIVIDE", full_y, det, sx + 450, y - 750),
+    )
+    unit = switch("VECTOR", parallel, unit_full, unit_parallel, sx + 800, y - 300, "Unit Splay")
+
+    # 4. Levels.
+    lx, ly = x + 1250, y - 1100
+    n_pos = add("GeometryNodeInputPosition", lx - 400, ly)
+    px_, py_, pz = separate(n_pos.outputs["Position"], lx - 250, ly)
+    n_terrain = add("GeometryNodeInputNamedAttribute", lx - 400, ly - 400, "Terrain Attribute")
+    n_terrain.data_type = "BOOLEAN"
+    n_terrain.inputs["Name"].default_value = splay.TERRAIN_ATTRIBUTE
+    terrain = n_terrain.outputs["Attribute"]
+    terrain_z = switch("FLOAT", terrain, -1e9, pz, lx - 50, ly - 300, "Terrain Z")
+
+    quantised = []
+    for index, socket in enumerate((px_, py_)):
+        n_int = add("FunctionNodeFloatToInt", lx, ly + 100 - 100 * index)
+        n_int.rounding_mode = "ROUND"
+        links.new(
+            math_node("DIVIDE", socket, splay.XY_QUANT, lx - 100, ly + 100 - 100 * index), n_int.inputs[0]
+        )
+        quantised.append(n_int.outputs[0])
+    tops = []
+    for index, (value, seed) in enumerate((quantised, quantised[::-1])):
+        n_hash = add("FunctionNodeHashValue", lx + 150, ly - 200 * index, "Column ID")
+        n_hash.data_type = "INT"
+        links.new(value, n_hash.inputs["Value"])
+        links.new(seed, n_hash.inputs["Seed"])
+        n_max = add("GeometryNodeFieldMinAndMax", lx + 300, ly - 200 * index, "Column Top")
+        n_max.data_type = "FLOAT"
+        n_max.domain = "POINT"
+        links.new(terrain_z, n_max.inputs["Value"])
+        links.new(n_hash.outputs["Hash"], n_max.inputs["Group ID"])
+        tops.append(n_max.outputs["Max"])
+    top = math_node("MINIMUM", tops[0], tops[1], lx + 450, ly - 100, "Column Top")
+    raw = math_node(
+        "DIVIDE",
+        math_node("SUBTRACT", top, pz, lx + 600, ly - 100),
+        n_in.outputs["Level Height"],
+        lx + 750,
+        ly - 100,
+        "Levels",
+    )
+    snapped = math_node("FLOOR", math_node("ADD", raw, 0.5, lx + 900, ly - 200), None, lx + 1050, ly - 200)
+    levels = switch("FLOAT", n_in.outputs["Splay Snap"], raw, snapped, lx + 1200, ly - 100, "Snap Levels")
+
+    # 5. Mask, and zero where no wall touches the vertex.
+    levels = switch("FLOAT", terrain, 0.0, levels, lx + 1350, ly - 100, "Terrain Only")
+    n_offset = add("ShaderNodeVectorMath", sx + 1000, y - 300, "Splay")
+    n_offset.operation = "SCALE"
+    links.new(unit, n_offset.inputs[0])
+    links.new(levels, n_offset.inputs["Scale"])
+    has_wall = math_node("GREATER_THAN", trace, 0.0, sx + 1000, y, "Has Wall")
+    return switch(
+        "VECTOR", has_wall, (0.0, 0.0, 0.0), n_offset.outputs[0], sx + 1200, y - 300, "Splay Offset"
+    )
 
 
 def _add_edge_id_branch(ng: bpy.types.NodeTree, n_in: bpy.types.Node, seated, add) -> bpy.types.NodeSocket:
@@ -484,6 +756,11 @@ def build_rig_object(
     set_modifier_input(mod, "Edge IDs", False)  # only the EDGES render pass turns it on
     set_modifier_input(mod, "Crease Angle", float(params.crease_angle))
     set_modifier_input(mod, "Marked Sharp", bool(params.edge_marked_sharp))
+    side, back = params.splay()
+    set_modifier_input(mod, "Splay Side", float(side))
+    set_modifier_input(mod, "Splay Back", float(back))
+    set_modifier_input(mod, "Level Height", float(params.splay_level_height))
+    set_modifier_input(mod, "Splay Snap", bool(params.splay_snap))
     rig.update_tag()
     return rig
 

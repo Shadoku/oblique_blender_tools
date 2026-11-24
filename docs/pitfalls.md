@@ -311,6 +311,60 @@ Guardrails: `tests/blender/test_render.py` skips at module level when
 the session hook install Mesa; `render.RenderSettingsGuard` restores every
 render setting it touches.
 
+## 17. Geometry Nodes field recipes (found while building the 0.4 tile splay)
+
+Probed with throwaway node trees on the 4.5.16 and 5.2.3 binaries; every
+answer below was the same on both unless the line says otherwise.
+
+- **The Normal node follows custom normals even on the face domain.** On a
+  box whose corner normals were all set to +Z with
+  `mesh.normals_split_custom_set`, both `Normal` read on the face domain and
+  Evaluate on Domain (FACE) of `Normal` return about `(0, 0, 1)` for the side
+  faces. Plain smooth shading does not leak (face normals stay exact). The
+  node's second output, **`True Normal`**, is the geometric face normal in
+  every case, and exists on 4.5 and 5.2. Use it for any geometry rule (wall
+  directions, slope masks); `test_custom_normals_do_not_change_the_splay`
+  guards it.
+- **Grouped reductions exist on both: `GeometryNodeFieldMinAndMax`** ("Field
+  Min & Max": inputs `Value`, `Group ID` (identifier `Group Index`), outputs
+  `Min`, `Max`; `data_type` FLOAT/INT/FLOAT_VECTOR, `domain` property), and
+  likewise `GeometryNodeFieldAverage` (Mean, Median) and
+  `GeometryNodeFieldVariance`, beside the older `GeometryNodeAccumulateField`.
+  No Repeat zone is needed for a per-group maximum.
+- **Group ID from a position:** `FunctionNodeFloatToInt` (`rounding_mode`
+  ROUND) on `x / quantum` and `y / quantum`, then `FunctionNodeHashValue`
+  (`data_type` INT, inputs `Value` and `Seed`) with one integer as the value
+  and the other as the seed. Same ids on both versions for the same input.
+  It is a 32-bit hash, so two columns can collide; the rig evaluates it
+  twice with the integers swapped and takes the smaller of the two maxima.
+- **Face to point is a plain mean.** Evaluate on Domain (FACE) read on the
+  point domain gives each point the unweighted mean of its adjacent faces'
+  values (a fan of a 100-unit quad, a triangle and a small quad gives
+  exactly 1.0 for face values 0, 1, 2 at the shared vertex). No area
+  weighting.
+- **A missing BOOLEAN Named Attribute reads `False`** on every point, with
+  nothing printed.
+- **Stored point attributes survive Split Edges and Realize.** Store Named
+  Attribute (POINT) before Split Edges: each duplicate carries its source
+  vertex's value. After Geometry to Instance with a mesh that lacks the
+  attribute and Realize Instances, that mesh's points read zero.
+- **Remove Named Attribute on an absent name prints nothing** (no console
+  line, no RNA error) on both versions, so it is safe to remove an
+  attribute that only some scenes have. Its pattern mode is a node property
+  on 4.5 (`node.pattern_mode`, `EXACT`/`WILDCARD`) and a menu input socket
+  (`inputs["Pattern Mode"]`) on 5.2, like section 15; the default (exact) is
+  the same, so leave it alone or shim it.
+- **Safe division.** Math DIVIDE returns 0 for a zero divisor, which keeps
+  NaNs out of a field but also hides a missing guard; the rig still guards
+  the zero cases with explicit Switch nodes.
+
+Guardrails: `rig._add_splay_field` uses only the nodes above, with Math
+`LESS_THAN` / `GREATER_THAN` into the Switch nodes' boolean socket (see the
+Compare note in section 16), and `tests/blender/test_splay.py` compares the
+evaluated rig with `core.splay.splay_offsets` on boxes, stacks, pits,
+straight and diagonal walls, smooth and custom-normal meshes, on both
+versions.
+
 ## Sources
 
 - Python API release notes: https://developer.blender.org/docs/release_notes/<version>/python_api/

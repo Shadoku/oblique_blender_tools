@@ -79,6 +79,10 @@ def test_node_group_layout(addon) -> None:
         "Edge IDs",
         "Crease Angle",
         "Marked Sharp",
+        "Splay Side",
+        "Splay Back",
+        "Level Height",
+        "Splay Snap",
     ]
     assert outputs == ["Geometry"]
     depth = next(i for i in ng.interface.items_tree if i.name == "Depth Scale")
@@ -126,7 +130,8 @@ def test_node_group_layout(addon) -> None:
     def linked(a, b) -> bool:
         return any(link.from_node == a and link.to_node == b for link in ng.links)
 
-    # Collection Info -> Realize Source -> Turn -> Seat -> Edge IDs switch -> Shear -> Realize -> Output
+    # Collection Info -> Realize Source -> Turn -> Seat -> Store Splay -> Edge IDs switch
+    # -> Apply Splay -> Remove (splay, terrain) -> Shear -> Realize -> Output
     out = next(n for n in ng.nodes if n.bl_idname == "NodeGroupOutput")
     realize = next(link.from_node for link in ng.links if link.to_node == out)
     assert realize.bl_idname == "GeometryNodeRealizeInstances"
@@ -137,15 +142,19 @@ def test_node_group_layout(addon) -> None:
         ng.nodes["Realize Source"],
         ng.nodes["Turn"],
         ng.nodes["Seat"],
+        ng.nodes["Store Splay"],
         edge_switch,
+        ng.nodes["Apply Splay"],
+        ng.nodes["Remove oblique_splay"],
+        ng.nodes["Remove oblique_terrain"],
         transform,
         realize,
         out,
     ]
     for a, b in pairwise(chain):
         assert linked(a, b), f"{a.name} -> {b.name}"
-    # The edge branch: Seat -> Split Edges -> Store (island colour) -> ... -> the switch's True input.
-    assert linked(ng.nodes["Seat"], ng.nodes["Split Sharp Edges"])
+    # The edge branch: Store Splay -> Split Edges -> Store (island colour) -> ... -> the switch's True input.
+    assert linked(ng.nodes["Store Splay"], ng.nodes["Split Sharp Edges"])
     assert linked(ng.nodes["Split Sharp Edges"], ng.nodes["Store Edge IDs"])
     store = ng.nodes["Store Edge IDs"]
     assert (store.data_type, store.domain) == ("FLOAT_COLOR", "CORNER")

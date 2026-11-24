@@ -165,6 +165,35 @@ check `bpy.app.online_access` before connecting.
 - `@persistent` sets `fn._bpy_persistent = None`; test with `hasattr`, not
   `getattr(..., False)`.
 
+## 15. Geometry Nodes facts probed on 4.5 LTS and 5.2 LTS
+
+Built from Python and checked by evaluating throwaway node trees on both
+binaries; same result on both unless stated.
+
+- **`Normal` follows custom normals even on the face domain** (also through
+  Evaluate on Domain FACE). Its **`True Normal`** output is the geometric face
+  normal on both versions; use it for geometry rules.
+- **Grouped reductions:** `GeometryNodeFieldMinAndMax` (Value, Group ID ->
+  Min, Max), `GeometryNodeFieldAverage`, `GeometryNodeFieldVariance` and
+  `GeometryNodeAccumulateField` all take a `Group ID` (identifier
+  `Group Index`). A Group ID from two integers: `FunctionNodeHashValue`
+  (`data_type` INT, `Value` + `Seed`); it is a 32-bit hash, so collisions are
+  possible.
+- **Face to point interpolation is the unweighted mean** of the adjacent
+  faces (no area weights).
+- **A missing BOOLEAN Named Attribute reads False**; Remove Named Attribute
+  on an absent name prints nothing.
+- **Stored point attributes are copied to every duplicate by Split Edges**,
+  and read zero on meshes realized alongside that lack them.
+- **Properties that became menu sockets:** Transform Geometry's mode
+  (`node.mode` on 4.5, `inputs["Mode"]` on 5.x) and Remove Named Attribute's
+  pattern mode (`node.pattern_mode` on 4.5, `inputs["Pattern Mode"]` on 5.x).
+  The property takes the enum identifier (`MATRIX`), the socket the display
+  name (`Matrix`).
+- **`FunctionNodeCompare.inputs`** lists every type variant on 4.5 but only
+  the current type's sockets on 5.x; index access breaks one of them. Math
+  `GREATER_THAN` / `LESS_THAN` into a boolean socket works on both.
+
 ## Sources
 
 - Python API release notes: https://developer.blender.org/docs/release_notes/<version>/python_api/
