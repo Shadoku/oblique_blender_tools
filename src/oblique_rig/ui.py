@@ -6,7 +6,7 @@ free of logic; tests/blender/test_ui.py calls them with a recording layout to
 prove they run and that every setting and operator is reachable.
 
 The sidebar is one root panel (status and the Source/Sheared toggle) with
-sub-panels in workflow order: Rig, Projection, Frame, Direction, Output. The
+sub-panels in workflow order: Rig, Projection, Tiles, Frame, Direction, Output. The
 render operators live in ``operators_render`` (another module); they are
 referenced here by ``bl_idname`` string only.
 """
@@ -14,14 +14,16 @@ referenced here by ``bl_idname`` string only.
 import bpy
 from bpy.types import Panel
 
-from .core.oblique import RIG_NAME, SOURCE_COLLECTION
+from .core.oblique import RIG_NAME, SOURCE_COLLECTION, splay_readout, splay_warnings
 from .operators import (
     OBLIQUE_RIG_OT_add_calibration,
     OBLIQUE_RIG_OT_add_selected,
     OBLIQUE_RIG_OT_apply_resolution_preset,
     OBLIQUE_RIG_OT_apply_slope_preset,
     OBLIQUE_RIG_OT_build,
+    OBLIQUE_RIG_OT_clear_terrain,
     OBLIQUE_RIG_OT_fit_to_content,
+    OBLIQUE_RIG_OT_mark_terrain,
     OBLIQUE_RIG_OT_remove,
 )
 from .properties import get_settings, params_from_settings
@@ -106,10 +108,39 @@ class OBLIQUE_RIG_PT_projection(_SubPanel, Panel):
             layout.label(text=f"1 unit depth = {a * ppu:g} px right, {b * ppu:g} px up")
 
 
+class OBLIQUE_RIG_PT_tiles(_SubPanel, Panel):
+    bl_idname = "OBLIQUE_RIG_PT_tiles"
+    bl_label = "Tiles"
+    bl_order = 2
+
+    def draw(self, context: bpy.types.Context) -> None:
+        settings = get_settings(context)
+        layout = _split(self.layout)
+        layout.prop(settings, "splay_enabled")
+        col = layout.column(align=True)
+        col.active = settings.splay_enabled
+        col.prop(settings, "splay_level_height")
+        col.prop(settings, "splay_side_tiles")
+        col.prop(settings, "splay_back_tiles")
+        col.prop(settings, "splay_snap")
+        row = layout.row(align=True)
+        row.operator(OBLIQUE_RIG_OT_mark_terrain.bl_idname, icon="CHECKBOX_HLT")
+        row.operator(OBLIQUE_RIG_OT_clear_terrain.bl_idname, icon="CHECKBOX_DEHLT")
+
+        params = params_from_settings(settings)
+        readout = splay_readout(params)
+        if readout is not None:
+            label = layout.row()
+            label.active = settings.splay_enabled
+            label.label(text=readout)
+        for warning in splay_warnings(params):
+            layout.label(text=warning, icon="ERROR")
+
+
 class OBLIQUE_RIG_PT_frame(_SubPanel, Panel):
     bl_idname = "OBLIQUE_RIG_PT_frame"
     bl_label = "Frame"
-    bl_order = 2
+    bl_order = 3
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = get_settings(context)
@@ -135,7 +166,7 @@ class OBLIQUE_RIG_PT_frame(_SubPanel, Panel):
 class OBLIQUE_RIG_PT_direction(_SubPanel, Panel):
     bl_idname = "OBLIQUE_RIG_PT_direction"
     bl_label = "Direction"
-    bl_order = 3
+    bl_order = 4
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = get_settings(context)
@@ -149,7 +180,7 @@ class OBLIQUE_RIG_PT_direction(_SubPanel, Panel):
 class OBLIQUE_RIG_PT_output(_SubPanel, Panel):
     bl_idname = "OBLIQUE_RIG_PT_output"
     bl_label = "Output"
-    bl_order = 4
+    bl_order = 5
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = get_settings(context)
@@ -195,6 +226,7 @@ CLASSES: tuple[type, ...] = (
     OBLIQUE_RIG_PT_sidebar,
     OBLIQUE_RIG_PT_rig,
     OBLIQUE_RIG_PT_projection,
+    OBLIQUE_RIG_PT_tiles,
     OBLIQUE_RIG_PT_frame,
     OBLIQUE_RIG_PT_direction,
     OBLIQUE_RIG_PT_output,

@@ -6,8 +6,7 @@ import bpy
 import pytest
 
 READOUTS = {"last_footprint", "last_warnings"}  # shown as labels, never as editable fields
-# TODO(tile splay, plan step 5): the Tiles panel draws these; empty this set when it lands.
-NOT_YET_DRAWN = {"splay_enabled", "splay_level_height", "splay_side_tiles", "splay_back_tiles", "splay_snap"}
+SPLAY_SETTINGS = {"splay_enabled", "splay_level_height", "splay_side_tiles", "splay_back_tiles", "splay_snap"}
 
 
 def _all_settings(addon) -> set[str]:
@@ -50,7 +49,7 @@ def test_every_setting_is_drawn(addon, recording_layout) -> None:
     _draw_all(addon, recording_layout)  # float mode: slope controls
     settings.inner_lines = "EDGES"
     _draw_all(addon, recording_layout)  # sharp-edge lines: crease angle and marked sharp
-    assert _props(recording_layout.calls) == _all_settings(addon) - READOUTS - NOT_YET_DRAWN
+    assert _props(recording_layout.calls) == _all_settings(addon) - READOUTS
 
 
 @pytest.mark.parametrize("mode", ["NONE", "OBJECTS", "MATERIALS"])
@@ -99,6 +98,87 @@ def test_invalid_projection_draws_a_message(addon, recording_layout) -> None:
     settings.depth_px_up = 0
     calls = _draw(addon.ui.OBLIQUE_RIG_PT_projection, recording_layout)
     assert any(call[0] == "label" and call[2].get("icon") == "ERROR" for call in calls)
+
+
+def _warnings(calls) -> list[str]:
+    return [call[2]["text"] for call in calls if call[0] == "label" and call[2].get("icon") == "ERROR"]
+
+
+def _top_down(settings) -> None:
+    settings.splay_enabled = True
+    settings.depth_px_right = 0
+    settings.depth_px_up = 16
+
+
+def test_tiles_panel_sits_between_projection_and_frame(addon) -> None:
+    panels = _panels(addon)
+    names = [cls.__name__ for cls in panels]
+    i = names.index("OBLIQUE_RIG_PT_tiles")
+    assert names[i - 1] == "OBLIQUE_RIG_PT_projection"
+    assert names[i + 1] == "OBLIQUE_RIG_PT_frame"
+    tiles = addon.ui.OBLIQUE_RIG_PT_tiles
+    assert (
+        addon.ui.OBLIQUE_RIG_PT_projection.bl_order < tiles.bl_order < addon.ui.OBLIQUE_RIG_PT_frame.bl_order
+    )
+    assert tiles.bl_label == "Tiles"
+
+
+def test_tiles_panel_draws_settings_and_buttons(addon, recording_layout) -> None:
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    assert _props(calls) == SPLAY_SETTINGS
+    assert _operators(calls) == {"oblique_rig.mark_terrain", "oblique_rig.clear_terrain"}
+
+
+def test_tiles_readout(addon, recording_layout) -> None:
+    _top_down(addon.properties.get_settings(bpy.context))
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    assert "1 level = 16 px front, 16 px side, 16 px back" in _labels(calls)
+    assert _warnings(calls) == []
+
+
+def test_tiles_readout_shows_rounded_half_tiles(addon, recording_layout) -> None:
+    settings = addon.properties.get_settings(bpy.context)
+    _top_down(settings)
+    settings.splay_side_tiles = 0.7
+    settings.splay_back_tiles = 2.5
+    labels = _labels(_draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout))
+    assert "1 level = 16 px front, 8 px side, 40 px back" in labels
+
+
+def test_tiles_no_warnings_when_splay_is_off(addon, recording_layout) -> None:
+    """The default projection has Depth Right 16; that is no reason to warn while splay is off."""
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    assert _warnings(calls) == []
+
+
+def test_tiles_warning_depth_up(addon, recording_layout) -> None:
+    settings = addon.properties.get_settings(bpy.context)
+    _top_down(settings)
+    settings.depth_px_right = 16
+    settings.depth_px_up = 0
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    assert _warnings(calls) == ["Tile Splay needs Depth Up above 0"]
+    assert not any(label.startswith("1 level") for label in _labels(calls))
+
+
+def test_tiles_warning_depth_right(addon, recording_layout) -> None:
+    settings = addon.properties.get_settings(bpy.context)
+    settings.splay_enabled = True  # the default projection: Depth Right 16, Up 8
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    assert _warnings(calls) == ["Whole tiles need Depth Right 0"]
+
+
+def test_tiles_warning_half_tiles_odd_ppu(addon, recording_layout) -> None:
+    settings = addon.properties.get_settings(bpy.context)
+    _top_down(settings)
+    settings.pixels_per_unit = 15
+    settings.depth_px_up = 15
+    assert _warnings(_draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)) == []
+    settings.splay_back_tiles = 0.5
+    recording_layout.calls.clear()
+    assert _warnings(_draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)) == [
+        "Half tiles need an even Pixels per Unit"
+    ]
 
 
 def test_readouts_are_labels(addon, recording_layout) -> None:

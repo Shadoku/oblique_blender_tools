@@ -7,12 +7,14 @@ operator declares ``bl_options`` (``'UNDO'`` whenever it writes to bpy.data).
 Never keep references to Blender objects between calls; store names.
 """
 
+from collections.abc import Callable
+
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy.types import Operator
 
 from . import rig
-from .core import oblique, overlap, presets
+from .core import oblique, overlap, presets, splay
 from .preferences import get_prefs
 from .properties import get_settings, params_from_settings
 
@@ -287,6 +289,108 @@ class OBLIQUE_RIG_OT_apply_resolution_preset(Operator):
         return {"FINISHED"}
 
 
+def _plural(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _selected_meshes(context: bpy.types.Context) -> tuple[list[bpy.types.Mesh], int]:
+    """The distinct mesh datablocks of the selected mesh objects, and how many objects were skipped.
+
+    Linked duplicates share one mesh, which is listed (and counted) once. Objects
+    that are not meshes, and the rig's own objects, count as skipped.
+    """
+    meshes: dict[int, bpy.types.Mesh] = {}
+    eligible = rig.eligible_for_rig(context.selected_objects)
+    skipped = len(context.selected_objects) - len(eligible)
+    for ob in eligible:
+        if ob.type != "MESH" or ob.data is None:
+            skipped += 1
+            continue
+        meshes.setdefault(ob.data.as_pointer(), ob.data)
+    return list(meshes.values()), skipped
+
+
+def _terrain_poll(cls: type, context: bpy.types.Context, verb: str) -> bool:
+    # Mesh attributes written in Edit Mode are overwritten when the edit mesh is written back.
+    if context.mode != "OBJECT":
+        cls.poll_message_set("Switch to Object Mode")
+        return False
+    if not _selected_meshes(context)[0]:
+        cls.poll_message_set(f"Select the mesh objects to {verb}")
+        return False
+    return True
+
+
+def _mark_mesh(mesh: bpy.types.Mesh) -> None:
+    attr = mesh.attributes.get(splay.TERRAIN_ATTRIBUTE)
+    if attr is not None and (attr.domain, attr.data_type) != ("POINT", "BOOLEAN"):
+        mesh.attributes.remove(attr)
+        attr = None
+    if attr is None:
+        attr = mesh.attributes.new(splay.TERRAIN_ATTRIBUTE, "BOOLEAN", "POINT")
+    attr.data.foreach_set("value", [True] * len(attr.data))
+    mesh.update()
+
+
+def _clear_mesh(mesh: bpy.types.Mesh) -> None:
+    attr = mesh.attributes.get(splay.TERRAIN_ATTRIBUTE)
+    if attr is not None:
+        mesh.attributes.remove(attr)
+        mesh.update()
+
+
+def _run_terrain(
+    op: Operator, context: bpy.types.Context, apply: Callable[[bpy.types.Mesh], None], verb: str, done: str
+) -> set[str]:
+    """Shared execute() of Mark as Terrain and Clear Terrain: apply, rebuild, report."""
+    meshes, skipped = _selected_meshes(context)
+    if not meshes:
+        op.report({"WARNING"}, f"No mesh selected to {verb}")
+        return {"CANCELLED"}
+    for mesh in meshes:
+        apply(mesh)
+    _rebuild_if_rig_exists(context)
+    if get_prefs(context).report_results:
+        message = done.format(meshes=_plural(len(meshes), "mesh", "meshes"))
+        if skipped:
+            message += "; skipped " + _plural(
+                skipped, "object that is not a mesh", "objects that are not meshes"
+            )
+        op.report({"INFO"}, message)
+    return {"FINISHED"}
+
+
+class OBLIQUE_RIG_OT_mark_terrain(Operator):
+    bl_idname = "oblique_rig.mark_terrain"
+    bl_label = "Mark as Terrain"
+    bl_description = (
+        "Mark the selected meshes as terrain, so Tile Splay moves their wall bases; "
+        "linked duplicates share the mark. Run again after adding geometry"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return _terrain_poll(cls, context, "mark")
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        return _run_terrain(self, context, _mark_mesh, "mark", "Marked {meshes} as terrain")
+
+
+class OBLIQUE_RIG_OT_clear_terrain(Operator):
+    bl_idname = "oblique_rig.clear_terrain"
+    bl_label = "Clear Terrain"
+    bl_description = "Remove the terrain mark from the selected meshes, so Tile Splay leaves them alone"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return _terrain_poll(cls, context, "clear")
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        return _run_terrain(self, context, _clear_mesh, "clear", "Cleared terrain on {meshes}")
+
+
 CLASSES: tuple[type, ...] = (
     OBLIQUE_RIG_OT_build,
     OBLIQUE_RIG_OT_add_selected,
@@ -295,4 +399,6 @@ CLASSES: tuple[type, ...] = (
     OBLIQUE_RIG_OT_fit_to_content,
     OBLIQUE_RIG_OT_apply_slope_preset,
     OBLIQUE_RIG_OT_apply_resolution_preset,
+    OBLIQUE_RIG_OT_mark_terrain,
+    OBLIQUE_RIG_OT_clear_terrain,
 )

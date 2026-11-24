@@ -44,8 +44,8 @@ DEFAULTS = {
     "edge_marked_sharp": True,
     "splay_enabled": False,
     "splay_level_height": 1.0,
-    "splay_side_tiles": 1,
-    "splay_back_tiles": 1,
+    "splay_side_tiles": 1.0,
+    "splay_back_tiles": 1.0,
     "splay_snap": True,
     "last_footprint": "",
     "last_warnings": "",
@@ -67,8 +67,8 @@ MINIMUMS = {
     "outline_inner_px": 0,
     "crease_angle": 0.0,
     "splay_level_height": 0.0625,
-    "splay_side_tiles": 0,
-    "splay_back_tiles": 0,
+    "splay_side_tiles": 0.0,
+    "splay_back_tiles": 0.0,
 }
 
 MAXIMUMS = {
@@ -76,8 +76,8 @@ MAXIMUMS = {
     "outline_outer_px": 8,
     "outline_inner_px": 8,
     "crease_angle": math.pi,
-    "splay_side_tiles": 8,
-    "splay_back_tiles": 8,
+    "splay_side_tiles": 8.0,
+    "splay_back_tiles": 8.0,
 }
 
 TYPES = {
@@ -92,8 +92,6 @@ TYPES = {
         "grid_extent",
         "outline_outer_px",
         "outline_inner_px",
-        "splay_side_tiles",
-        "splay_back_tiles",
     },
     "FLOAT": {
         "slope_run",
@@ -106,6 +104,8 @@ TYPES = {
         "outline_color",
         "crease_angle",
         "splay_level_height",
+        "splay_side_tiles",
+        "splay_back_tiles",
     },
     "BOOLEAN": {
         "pixel_exact",
@@ -190,6 +190,28 @@ def test_splay_panel_names(addon) -> None:
         assert rna[identifier].description, identifier
 
 
+def test_splay_tiles_allow_half_tiles(addon) -> None:
+    """Side and Back Tiles step by half tiles in the UI and show one decimal."""
+    rna = addon.properties.OBLIQUE_RIG_Settings.bl_rna.properties
+    for name in ("splay_side_tiles", "splay_back_tiles"):
+        assert rna[name].step == 50, name  # Blender's float step is in hundredths
+        assert rna[name].precision == 1, name
+        assert "half tile" in rna[name].description, name
+
+
+def test_splay_tiles_reach_params_unrounded_and_splay_rounds(addon) -> None:
+    settings = addon.properties.get_settings(bpy.context)
+    settings.splay_enabled = True
+    settings.depth_px_right = 0
+    settings.depth_px_up = 16
+    settings.splay_side_tiles = 0.7
+    settings.splay_back_tiles = 1.5
+    params = addon.properties.params_from_settings(settings)
+    assert params.splay_side_tiles == pytest.approx(0.7)
+    assert params.splay_tiles() == (0.5, 1.5)
+    assert params.splay() == pytest.approx((0.5, 2.5))
+
+
 def test_output_dir_accepts_blend_relative_paths(addon) -> None:
     """Without PATH_SUPPORTS_BLEND_RELATIVE, assigning "//..." prints a RuntimeWarning."""
     rna = addon.properties.OBLIQUE_RIG_Settings.bl_rna.properties
@@ -233,8 +255,8 @@ def test_params_from_settings(addon) -> None:
     settings.edge_marked_sharp = False
     settings.splay_enabled = True
     settings.splay_level_height = 2.0
-    settings.splay_side_tiles = 3
-    settings.splay_back_tiles = 0
+    settings.splay_side_tiles = 3.5
+    settings.splay_back_tiles = 0.0
     settings.splay_snap = False
     params = addon.properties.params_from_settings(settings)
     assert isinstance(params, addon.core.oblique.RigParams)
@@ -248,7 +270,7 @@ def test_params_from_settings(addon) -> None:
     assert params.edge_marked_sharp is False
     assert params.splay_enabled is True
     assert params.splay_level_height == pytest.approx(2.0)
-    assert (params.splay_side_tiles, params.splay_back_tiles) == (3, 0)
+    assert (params.splay_side_tiles, params.splay_back_tiles) == pytest.approx((3.5, 0.0))
     assert params.splay_snap is False
 
 
@@ -260,7 +282,7 @@ def test_reset_restores_every_default(addon) -> None:
     settings.last_warnings = "A / B"
     settings.splay_enabled = True
     settings.splay_level_height = 3.0
-    settings.splay_side_tiles = 5
+    settings.splay_side_tiles = 5.5
     settings.splay_snap = False
     for prop in settings.bl_rna.properties:
         if prop.identifier != "rna_type":
@@ -270,5 +292,5 @@ def test_reset_restores_every_default(addon) -> None:
     assert settings.last_warnings == ""
     assert settings.splay_enabled is False
     assert settings.splay_level_height == pytest.approx(1.0)
-    assert settings.splay_side_tiles == 1
+    assert settings.splay_side_tiles == pytest.approx(1.0)
     assert settings.splay_snap is True

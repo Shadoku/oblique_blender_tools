@@ -159,19 +159,26 @@ class OBLIQUE_RIG_Settings(PropertyGroup):
         min=0.0625,
         soft_max=8.0,
     )
-    splay_side_tiles: IntProperty(
+    splay_side_tiles: FloatProperty(
         name="Side Tiles",
-        description="Width in tiles of a side wall, per level",
-        default=1,
-        min=0,
-        max=8,
+        description="Width in tiles of a side wall, per level; rounded to the nearest half tile",
+        default=1.0,
+        min=0.0,
+        max=8.0,
+        step=50,
+        precision=1,
     )
-    splay_back_tiles: IntProperty(
+    splay_back_tiles: FloatProperty(
         name="Back Tiles",
-        description="Height in tiles of the rim a back wall shows above the top, per level",
-        default=1,
-        min=0,
-        max=8,
+        description=(
+            "Height in tiles of the rim a back wall shows above the top, per level; "
+            "rounded to the nearest half tile"
+        ),
+        default=1.0,
+        min=0.0,
+        max=8.0,
+        step=50,
+        precision=1,
     )
     splay_snap: BoolProperty(
         name="Snap to Levels",

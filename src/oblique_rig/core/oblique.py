@@ -206,6 +206,15 @@ def _even_up(value: int) -> int:
     return value + (value % 2)
 
 
+def round_half_tile(tiles: float) -> float:
+    """``tiles`` rounded to the nearest half tile, half up (0.25 -> 0.5, 0.7 -> 0.5, 0.75 -> 1.0).
+
+    Side Tiles and Back Tiles are typed as floats; :meth:`RigParams.splay` and
+    the Tiles panel readout both use this, so a typed 0.7 behaves as 0.5.
+    """
+    return math.floor(tiles * 2.0 + 0.5 + _EPS) / 2.0
+
+
 @dataclass(frozen=True)
 class RigParams:
     """Every rig setting as a plain value (see ``properties.params_from_settings``).
@@ -236,18 +245,23 @@ class RigParams:
     """Tile Splay: move wall bases of terrain meshes outward in plan (see ``core.splay``)."""
     splay_level_height: float = 1.0
     """Tile Splay: units of wall height per level."""
-    splay_side_tiles: int = 1
-    """Tile Splay: tiles of side wall width per level."""
-    splay_back_tiles: int = 1
-    """Tile Splay: tiles of back rim height per level."""
+    splay_side_tiles: float = 1.0
+    """Tile Splay: tiles of side wall width per level (used rounded to half tiles)."""
+    splay_back_tiles: float = 1.0
+    """Tile Splay: tiles of back rim height per level (used rounded to half tiles)."""
     splay_snap: bool = True
     """Tile Splay: round levels half up to whole numbers."""
+
+    def splay_tiles(self) -> tuple[float, float]:
+        """``(side, back)`` tiles per level as used: each rounded with :func:`round_half_tile`."""
+        return round_half_tile(self.splay_side_tiles), round_half_tile(self.splay_back_tiles)
 
     def splay(self) -> tuple[float, float]:
         """Plan offsets per level ``(side, back)`` for ``core.splay.splay_offsets`` and the node group.
 
-        ``side = splay_side_tiles`` and ``back = (splay_level_height + splay_back_tiles) / b``
-        with ``b`` from :meth:`shear`: a back wall base first has to clear the
+        ``side = side_tiles`` and ``back = (splay_level_height + back_tiles) / b``
+        with the tiles from :meth:`splay_tiles` (rounded to half tiles) and
+        ``b`` from :meth:`shear`: a back wall base first has to clear the
         top's back edge on screen, then show the rim. ``(0.0, 0.0)`` when Tile
         Splay is off (without computing the shear) or ``b`` is 0; zero offsets
         are how the node group is switched off.
@@ -260,7 +274,8 @@ class RigParams:
         _, b = self.shear()
         if b <= 0:
             return 0.0, 0.0
-        return float(self.splay_side_tiles), (self.splay_level_height + self.splay_back_tiles) / b
+        side_tiles, back_tiles = self.splay_tiles()
+        return side_tiles, (self.splay_level_height + back_tiles) / b
 
     def shear(self) -> tuple[float, float]:
         """Shear coefficients ``(a, b)``: units moved right and up per unit of depth.
@@ -324,6 +339,70 @@ class RigParams:
             x = snap_to_pixel(x, self.pixels_per_unit)
             z = snap_to_pixel(z, self.pixels_per_unit)
         return x, y, z
+
+
+SPLAY_NEEDS_DEPTH_UP = "Tile Splay needs Depth Up above 0"
+SPLAY_NEEDS_DEPTH_RIGHT_0 = "Whole tiles need Depth Right 0"
+SPLAY_HALF_TILES_NEED_EVEN_PPU = "Half tiles need an even Pixels per Unit"
+
+
+def _splay_b(params: RigParams) -> float:
+    """Depth-up shear ``b`` for the Tiles panel; 0.0 when the projection is invalid."""
+    try:
+        return params.shear()[1]
+    except ValueError:
+        return 0.0
+
+
+def splay_level_px(params: RigParams) -> tuple[float, float, float]:
+    """Screen pixels per level ``(front, side, back)`` with Tile Splay.
+
+    Front wall height ``level_height * ppu``, side wall width ``side_tiles * ppu``
+    and back rim height ``back_tiles * ppu``, with the tiles rounded as
+    :meth:`RigParams.splay_tiles`. Exact with Depth Right 0; with Depth Right
+    above 0 the back offset also shifts the base sideways.
+    """
+    ppu = params.pixels_per_unit
+    side_tiles, back_tiles = params.splay_tiles()
+    return params.splay_level_height * ppu, side_tiles * ppu, back_tiles * ppu
+
+
+def splay_readout(params: RigParams) -> str | None:
+    """Tiles panel readout, e.g. ``"1 level = 16 px front, 16 px side, 16 px back"``.
+
+    None when Depth Up is 0 or the projection is invalid (the splay is then off).
+    """
+    if _splay_b(params) <= 0:
+        return None
+    front, side, back = splay_level_px(params)
+    return f"1 level = {front:g} px front, {side:g} px side, {back:g} px back"
+
+
+def splay_warnings(params: RigParams) -> list[str]:
+    """Tiles panel warnings for the current settings; empty when Tile Splay is off.
+
+    - :data:`SPLAY_NEEDS_DEPTH_UP`: ``b`` is 0 (or the projection is invalid),
+      so :meth:`RigParams.splay` returns zero offsets.
+    - :data:`SPLAY_NEEDS_DEPTH_RIGHT_0`: ``a`` is not 0, so the back offset
+      also moves wall bases sideways by an amount that need not be whole pixels.
+    - :data:`SPLAY_HALF_TILES_NEED_EVEN_PPU`: a rounded tile count is a half
+      tile and Pixels per Unit is odd, so the half tile is not whole pixels.
+    """
+    if not params.splay_enabled:
+        return []
+    try:
+        a, b = params.shear()
+    except ValueError:
+        return [SPLAY_NEEDS_DEPTH_UP]
+    if b <= 0:
+        return [SPLAY_NEEDS_DEPTH_UP]
+    warnings = []
+    if a != 0:
+        warnings.append(SPLAY_NEEDS_DEPTH_RIGHT_0)
+    has_half = any(tiles % 1 for tiles in params.splay_tiles())
+    if has_half and params.pixels_per_unit % 2:
+        warnings.append(SPLAY_HALF_TILES_NEED_EVEN_PPU)
+    return warnings
 
 
 def project_to_pixels(

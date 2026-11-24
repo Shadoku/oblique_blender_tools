@@ -4,7 +4,8 @@ A Blender extension (Blender 4.5 LTS through 5.2 LTS) that builds a 2:1
 oblique projection rig for drawing pixel-art guides. Model or link your assets
 in 3D, look through the rig's camera, and render pixel-exact reference layers
 (flat colours, shading, object ids, silhouette, outline, floor grid) to paint
-over. The output is a reference, never final art: every pixel lands on the
+over. A top-down mode turns a tile blockout into guides in the style of 2D
+Zelda tilesets, with side walls that have width and back walls shown as a rim. The output is a reference, never final art: every pixel lands on the
 grid so you can trace it without guessing.
 
 ## Why an oblique projection
@@ -52,8 +53,10 @@ is why pixel-exact is the default.
 - **`Oblique Rig` object** with a Geometry Nodes modifier (node group
   `ObliqueShear`): Collection Info pulls in the source collection and realizes
   it, Transform turns it by **Direction** about Z, **Auto Seat** moves it so
-  its bounding-box front edge is on y=0 and it is centred on x=0, a matrix
-  Transform applies the shear, and Realize Instances turns the result into a
+  its bounding-box front edge is on y=0 and it is centred on x=0, with
+  **Tile Splay** the wall bases of terrain meshes move outward (see
+  [Top-down tilesets](#top-down-tilesets)), a matrix Transform applies the
+  shear, and Realize Instances turns the result into a
   real mesh you can apply or export.
 - **`Oblique Camera`**: orthographic, facing +Y, with its ortho scale sized so
   one Blender unit is exactly *Pixels per Unit* render pixels. Set as the scene
@@ -123,10 +126,101 @@ e.g. "Crate / Barrel overlap in depth". The shear keeps depth order, so objects
 that merely overlap on screen or stand on a floor are fine; objects pushed into
 each other are where the guide stops telling you which edge is in front.
 
+## Top-down tilesets
+
+Top-down tilesets in the style of the 2D Zelda games draw terrain with a
+convention no single projection produces: tops and front walls are seen as
+from above, but side walls are given width and back walls show as a thin rim
+above the top. **Tile Splay** gets there from an ordinary blockout (a grid
+with regions extruded up): before the shear, each wall base of a mesh marked
+as terrain moves outward in plan, so side and back walls become visible. Tops
+never move, so every top keeps the shape and position you modelled. Cliffs,
+plateaus, pits and rooms then render as tile-aligned guides; a pit's walls
+splay into the pit, which gives room interiors.
+
+One tile is one Blender unit, which is *Pixels per Unit* pixels: the grid the
+rig already uses (Grid Step 1).
+
+1. Model the blockout on the unit grid: a grid or plane with regions extruded
+   up by whole units (one unit per level). One connected mesh works best.
+2. **Add Selected to Rig**, then, with the blockout still selected and in
+   Object Mode, **Mark as Terrain** (Tiles panel). Props such as trees, houses
+   and characters stay unmarked and are drawn as plain oblique.
+3. **Slope Presets > Top-down** (Projection panel): Depth Right 0, Depth Up
+   equal to Pixels per Unit.
+4. Turn on **Tile Splay**. The panel shows what one level gives on screen,
+   e.g. "1 level = 16 px front, 16 px side, 16 px back".
+5. Turn **Auto Seat** off (Direction panel), or keep the blockout an even
+   number of tiles wide, so it stays on the tile grid (see the limits below).
+6. **Fit to Content** and **Render Guides** as usual. Fit reads the splayed
+   result, so the frame includes the walls.
+
+What one level of wall gives on screen:
+
+| Wall faces | On screen per level |
+|---|---|
+| Front (toward the camera) | *Level Height* tiles tall, from the projection itself. |
+| Side (left or right) | *Side Tiles* tiles wide. |
+| Back (away from the camera) | A rim *Back Tiles* tiles tall above the top's back edge. |
+
+Walls facing in between (a round plateau) blend smoothly from one to the
+next. A 2-level cliff shows twice as much: two levels of side wall and
+`2 * Back Tiles` of rim. **Mark as Terrain** writes a boolean point attribute
+`oblique_terrain` on the mesh data, so linked duplicates share the mark;
+**Clear Terrain** removes it. Both rebuild the rig if there is one. Geometry
+you join into a marked mesh later is not terrain until you mark it again.
+
+Wall sizes are whole tiles when Depth Right is 0 and Depth Up is above 0 (the
+Top-down preset), Level Height is a whole number of units and wall heights are
+multiples of it. With Snap to Levels on, a slightly-off height still gives a
+side wall a whole number of tiles wide and puts the back wall's base a whole
+number of tiles above the wall's ground line; the front wall always shows its
+true height. Tops are whole tiles only when Depth Up is a multiple of Pixels
+per Unit. Half tiles are whole pixels only when Pixels per Unit is even.
+
+The panel warns when the result will not be what you expect:
+
+- "Tile Splay needs Depth Up above 0": with Depth Up 0 nothing splays.
+- "Whole tiles need Depth Right 0": the splay still works, but the back
+  offset also shifts wall bases sideways, not necessarily by whole pixels.
+- "Half tiles need an even Pixels per Unit": a half tile at an odd Pixels per
+  Unit is not a whole number of pixels.
+
+### Limits
+
+- **Ground behind a cliff.** A back wall covers `(Level Height + Back Tiles) /
+  b` units of ground per level, where `b` is Depth Up / Pixels per Unit (1 with
+  the Top-down preset). A plateau has to be deeper than that for its top to
+  stay visible.
+- **Space beside walls.** Props need *Side Tiles* of free ground per level
+  next to a side wall, as they need free ground behind a back wall.
+- **Narrow gaps.** Splays from facing walls can cross (a one-tile trench
+  between two cliffs). The rig does not detect this.
+- **Overhangs, caves, bridges.** The rule assumes terrain is a height field:
+  geometry above other geometry at the same plan position is treated as one
+  wall.
+- **Flush stacks need shared plan positions.** A wall's height is measured to
+  the highest terrain vertex at the same x and y. A connected extruded grid
+  always has those; two separate boxes stacked flush only where their corners
+  coincide. Where the upper wall of a flush stack ends, the lower wall changes
+  from 2 levels to 1 across one grid cell (a diagonal), and the lower top's
+  edge vertex moves with it.
+- **Connected ground.** In one connected mesh, the ground faces next to a wall
+  base are squashed or folded under the splayed wall. The wall hides them.
+- **Ramps and stairs.** A sloped face counts as part wall. The result is
+  continuous but not tuned; expect to paint stairs by hand.
+- **Front-pointing vertex.** A vertex whose two walls face front-left and
+  front-right bulges forward slightly (0.13 units on a 24-sided cylinder).
+  Turn the shape so a face, not a vertex, points at the camera.
+- **Auto Seat and the tile grid.** Auto Seat centres the content on x, so a
+  blockout an odd number of tiles wide sits half a tile off the unit grid (and
+  off the grid pass). Turn Auto Seat off, or keep the width even.
+- **Depth warnings** use the source objects before the splay.
+
 ## Settings
 
 The tab has a header (rig status and the **View** toggle, default *Sheared*)
-and five sub-panels in workflow order.
+and six sub-panels in workflow order.
 
 ### Rig
 
@@ -154,6 +248,24 @@ non-zero):
 | 1:1 | 0.5 | 0.5 | 8, 8 |
 | 3:2 | 0.75 | 0.5 | 12, 8 |
 | 1:2 (steep) | 0.5 | 1.0 | 8, 16 |
+| Top-down | 0.0 | 1.0 | 0, 16 |
+
+### Tiles
+
+| Setting | Default | What it does |
+|---|---|---|
+| Tile Splay | off | Move the wall bases of terrain meshes outward, so side walls get width and back walls show a rim. Needs Depth Up above 0. |
+| Level Height | 1 | Wall height in units that counts as one level. |
+| Side Tiles | 1.0 | Width of a side wall per level, in tiles (0 to 8, steps of half a tile). |
+| Back Tiles | 1.0 | Height of a back wall's rim per level, in tiles (0 to 8, steps of half a tile). |
+| Snap to Levels | on | Round wall heights to whole levels (half up), so side and back walls are whole tiles. |
+| Mark as Terrain | | Mark the selected meshes as terrain (Object Mode). Non-mesh objects are skipped. |
+| Clear Terrain | | Remove the mark from the selected meshes. |
+
+Side Tiles and Back Tiles are used rounded to the nearest half tile (half
+up): a typed 0.7 behaves as 0.5. Below the buttons: the readout of what one
+level gives on screen, using the rounded values, and the warnings described
+in [Top-down tilesets](#top-down-tilesets).
 
 ### Frame
 
@@ -331,8 +443,9 @@ installed with Blender's bundled Python into `.blender-deps/`.
 - `src/oblique_rig/core/`: no `bpy`, unit-tested in milliseconds: shear,
   pixel-exact and fit maths (`oblique.py`), mesh primitives, outlines
   (`outline.py`), grid lines (`guides.py`), layer compositing and sprite sheets
-  (`compose.py`), a stdlib PNG encoder/decoder (`png.py`), presets and the
-  interpenetration check (`overlap.py`). numpy comes with Blender.
+  (`compose.py`), a stdlib PNG encoder/decoder (`png.py`), presets, the
+  interpenetration check (`overlap.py`) and the wall splay reference
+  (`splay.py`) the node group is tested against. numpy comes with Blender.
 - `src/oblique_rig/rig.py`: the Blender-facing builders (node group, camera,
   render settings); `render.py`: Workbench passes and the guide files;
   `operators.py`, `operators_render.py`, `ui.py`, `properties.py` stay thin.

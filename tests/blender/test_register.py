@@ -29,7 +29,15 @@ def test_disable_then_enable_round_trip(addon) -> None:
 
     assert hasattr(bpy.types.Scene, scene_attr)
     assert handler in bpy.app.handlers.load_post
-    for idname in ("build", "add_calibration", "remove", "fit_to_content", "apply_slope_preset"):
+    for idname in (
+        "build",
+        "add_calibration",
+        "remove",
+        "fit_to_content",
+        "apply_slope_preset",
+        "mark_terrain",
+        "clear_terrain",
+    ):
         assert hasattr(bpy.types, f"OBLIQUE_RIG_OT_{idname}"), idname
         assert getattr(bpy.ops.oblique_rig, idname).idname_py() == f"oblique_rig.{idname}"
 
@@ -46,10 +54,13 @@ def test_expected_classes(addon) -> None:
         "OBLIQUE_RIG_OT_fit_to_content",
         "OBLIQUE_RIG_OT_apply_slope_preset",
         "OBLIQUE_RIG_OT_apply_resolution_preset",
+        "OBLIQUE_RIG_OT_mark_terrain",
+        "OBLIQUE_RIG_OT_clear_terrain",
         *(cls.__name__ for cls in addon.operators_render.CLASSES),
         "OBLIQUE_RIG_PT_sidebar",
         "OBLIQUE_RIG_PT_rig",
         "OBLIQUE_RIG_PT_projection",
+        "OBLIQUE_RIG_PT_tiles",
         "OBLIQUE_RIG_PT_frame",
         "OBLIQUE_RIG_PT_direction",
         "OBLIQUE_RIG_PT_output",

@@ -180,8 +180,8 @@ def make_params(**overrides) -> "oblique.RigParams":
         "edge_marked_sharp": True,
         "splay_enabled": False,
         "splay_level_height": 1.0,
-        "splay_side_tiles": 1,
-        "splay_back_tiles": 1,
+        "splay_side_tiles": 1.0,
+        "splay_back_tiles": 1.0,
         "splay_snap": True,
     }
     values.update(overrides)
@@ -204,7 +204,7 @@ def test_rig_params_splay_defaults() -> None:
     params = oblique.RigParams(pixels_per_unit=8)
     assert params.splay_enabled is False
     assert params.splay_level_height == 1.0
-    assert (params.splay_side_tiles, params.splay_back_tiles) == (1, 1)
+    assert (params.splay_side_tiles, params.splay_back_tiles) == (1.0, 1.0)
     assert params.splay_snap is True
 
 
@@ -250,6 +250,135 @@ def test_splay_offsets_per_level(overrides: dict, expected: tuple[float, float])
 def test_splay_in_float_mode_uses_the_slope_shear() -> None:
     params = top_down(pixel_exact=False, slope_run=0.0, slope_rise=1.0, depth_scale=0.5)
     assert params.splay() == pytest.approx((1.0, 4.0))
+
+
+@pytest.mark.parametrize(
+    ("tiles", "expected"),
+    [
+        (0.0, 0.0),
+        (0.2, 0.0),
+        (0.25, 0.5),  # half up
+        (0.5, 0.5),
+        (0.7, 0.5),
+        (0.75, 1.0),  # half up
+        (1.0, 1.0),
+        (1.24, 1.0),
+        (2.5, 2.5),
+        (8.0, 8.0),
+        (0.699999988079071, 0.5),  # 0.7 as Blender stores it (float32)
+        (0.7499999, 0.5),
+    ],
+)
+def test_round_half_tile(tiles: float, expected: float) -> None:
+    got = oblique.round_half_tile(tiles)
+    assert got == expected
+    assert isinstance(got, float)
+
+
+def test_splay_tiles_are_rounded_to_half_tiles() -> None:
+    params = top_down(splay_side_tiles=0.7, splay_back_tiles=1.3)
+    assert params.splay_tiles() == (0.5, 1.5)
+
+
+def test_splay_uses_the_rounded_tiles() -> None:
+    """A typed 0.7 behaves as 0.5: side = 0.5, back = (1 + 0.5) / 1."""
+    params = top_down(splay_side_tiles=0.7, splay_back_tiles=0.3)
+    assert params.splay() == pytest.approx((0.5, 1.5), abs=1e-12)
+
+
+def test_splay_half_tiles_at_half_depth_up() -> None:
+    params = top_down(depth_px_up=8, splay_side_tiles=1.5, splay_back_tiles=0.5)
+    assert params.splay() == pytest.approx((1.5, 3.0), abs=1e-12)  # (1 + 0.5) / 0.5
+
+
+def test_splay_level_px_defaults_at_top_down() -> None:
+    assert oblique.splay_level_px(top_down()) == (16.0, 16.0, 16.0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"splay_side_tiles": 0.5, "splay_back_tiles": 2.0}, (16.0, 8.0, 32.0)),
+        ({"splay_side_tiles": 0.7}, (16.0, 8.0, 16.0)),  # the rounded value, not the typed one
+        ({"splay_level_height": 0.5}, (8.0, 16.0, 16.0)),
+        ({"pixels_per_unit": 32, "depth_px_up": 32}, (32.0, 32.0, 32.0)),
+        ({"depth_px_up": 8}, (16.0, 16.0, 16.0)),  # the rim height does not depend on b
+    ],
+)
+def test_splay_level_px(overrides: dict, expected: tuple[float, float, float]) -> None:
+    assert oblique.splay_level_px(top_down(**overrides)) == pytest.approx(expected)
+
+
+def test_splay_readout_text() -> None:
+    assert oblique.splay_readout(top_down()) == "1 level = 16 px front, 16 px side, 16 px back"
+    readout = oblique.splay_readout(top_down(pixels_per_unit=15, depth_px_up=15, splay_side_tiles=0.5))
+    assert readout == "1 level = 15 px front, 7.5 px side, 15 px back"
+
+
+def test_splay_readout_without_depth_up_is_none() -> None:
+    assert oblique.splay_readout(top_down(depth_px_right=16, depth_px_up=0)) is None
+
+
+def test_splay_readout_with_an_invalid_shear_is_none() -> None:
+    assert oblique.splay_readout(top_down(depth_px_right=0, depth_px_up=0)) is None
+
+
+def test_splay_warnings_none_at_top_down() -> None:
+    assert oblique.splay_warnings(top_down()) == []
+
+
+def test_splay_warnings_none_when_splay_is_off() -> None:
+    """The default projection (Depth Right 16) would warn; with Tile Splay off it must not."""
+    params = make_params(splay_side_tiles=0.5, pixels_per_unit=15)
+    assert oblique.splay_warnings(params) == []
+
+
+def test_splay_warning_depth_up() -> None:
+    warnings = oblique.splay_warnings(top_down(depth_px_right=16, depth_px_up=0))
+    assert warnings == [oblique.SPLAY_NEEDS_DEPTH_UP]
+    assert oblique.SPLAY_NEEDS_DEPTH_UP == "Tile Splay needs Depth Up above 0"
+
+
+def test_splay_warning_depth_right() -> None:
+    assert oblique.splay_warnings(top_down(depth_px_right=8)) == [oblique.SPLAY_NEEDS_DEPTH_RIGHT_0]
+    assert oblique.SPLAY_NEEDS_DEPTH_RIGHT_0 == "Whole tiles need Depth Right 0"
+
+
+def test_splay_warning_depth_right_in_float_mode() -> None:
+    params = top_down(pixel_exact=False)  # slope 2:1 -> a > 0
+    assert oblique.SPLAY_NEEDS_DEPTH_RIGHT_0 in oblique.splay_warnings(params)
+    params = top_down(pixel_exact=False, slope_run=0.0, slope_rise=1.0)
+    assert oblique.splay_warnings(params) == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "warns"),
+    [
+        ({"pixels_per_unit": 15, "depth_px_up": 15}, False),  # whole tiles: no half
+        ({"pixels_per_unit": 15, "depth_px_up": 15, "splay_side_tiles": 0.5}, True),
+        ({"pixels_per_unit": 15, "depth_px_up": 15, "splay_back_tiles": 2.5}, True),
+        ({"pixels_per_unit": 15, "depth_px_up": 15, "splay_back_tiles": 0.7}, True),  # rounds to 0.5
+        ({"pixels_per_unit": 15, "depth_px_up": 15, "splay_back_tiles": 0.8}, False),  # rounds to 1
+        ({"splay_side_tiles": 0.5, "splay_back_tiles": 0.5}, False),  # even Pixels per Unit
+    ],
+)
+def test_splay_warning_half_tiles(overrides: dict, warns: bool) -> None:
+    warnings = oblique.splay_warnings(top_down(**overrides))
+    assert (oblique.SPLAY_HALF_TILES_NEED_EVEN_PPU in warnings) is warns
+    assert oblique.SPLAY_HALF_TILES_NEED_EVEN_PPU == "Half tiles need an even Pixels per Unit"
+
+
+def test_splay_warnings_can_combine() -> None:
+    params = top_down(pixels_per_unit=15, depth_px_right=15, depth_px_up=15, splay_side_tiles=0.5)
+    assert oblique.splay_warnings(params) == [
+        oblique.SPLAY_NEEDS_DEPTH_RIGHT_0,
+        oblique.SPLAY_HALF_TILES_NEED_EVEN_PPU,
+    ]
+
+
+def test_splay_warning_invalid_shear_asks_for_depth_up() -> None:
+    warnings = oblique.splay_warnings(top_down(depth_px_right=0, depth_px_up=0))
+    assert warnings == [oblique.SPLAY_NEEDS_DEPTH_UP]
 
 
 def test_rig_params_is_frozen() -> None:

@@ -4,6 +4,7 @@ Blender extension that builds a 2:1 oblique projection rig for pixel-art guides
 (Geometry Nodes shear, pixel-grid orthographic camera, flat render settings) and
 renders pixel-exact guide passes to PNG (flat, shaded, ids, silhouette, outline
 with object/material/sharp-edge inner lines, grid, composite, turnaround sheets),
+and splays the wall bases of meshes marked as terrain for top-down tilesets,
 set up for AI-assisted development: every change is verified by
 `python3 tools/check.py`, which runs headless without opening Blender's UI.
 Trust its output over your own reasoning about whether code works. Blender's
@@ -116,7 +117,8 @@ src/<id>/                   the extension package (this is what gets zipped)
   blender_manifest.toml     id, version, blender_version_min, license, permissions
   __init__.py               register()/unregister(): ordered CLASSES tuple only
   core/                     pure Python (+ numpy), no bpy:
-    oblique.py              shear, pixel-exact params (RigParams), projection, fit_frame
+    oblique.py              shear, pixel-exact params (RigParams, splay()), projection, fit_frame,
+                            half-tile rounding, Tiles panel readout and warnings
     primitives.py           calibration mesh vertices
     outline.py              whole-pixel outlines, labels, merge_near_colors
     edge_ids.py             island index <-> colour for sharp-edge outlines (EDGES pass)
@@ -125,10 +127,13 @@ src/<id>/                   the extension package (this is what gets zipped)
     png.py                  stdlib PNG encode/decode (byte-exact output)
     presets.py              slope and resolution presets
     overlap.py              depth-sort warning (3D bounding-box interpenetration)
+    splay.py                wall splay reference (numpy) the node group is tested against;
+                            TERRAIN_ATTRIBUTE
   rig.py                    Blender-facing builders: node group, camera, render settings, bounds
   render.py                 Workbench passes (incl. EDGES: VERTEX colour, Raw), settings guard, guide/turnaround files
   operators.py              thin operators: build, add_selected, add_calibration, remove,
-                            fit_to_content, apply_slope_preset, apply_resolution_preset
+                            fit_to_content, apply_slope_preset, apply_resolution_preset,
+                            mark_terrain, clear_terrain (Object Mode only)
   operators_render.py       render_guides, render_turnaround (write files; REGISTER, no UNDO)
   properties.py             PropertyGroup + the one PointerProperty on Scene
   ui.py                     panels/menus, draw() only
@@ -145,6 +150,7 @@ tools/new_addon.py          renames the template into an add-on (already run for
 docs/pitfalls.md            why each rule and convention exists, with sources
 docs/testing.md             what headless Blender can and cannot verify
 docs/PLAN-oblique-rig*.md   plans for 0.1 and 0.2, with verified API facts and deviations
+docs/PLAN-tile-splay.md     plan for 0.4 (top-down tile splay); section 12 overrides earlier sections
 .github/workflows/          ci.yml (4.5 LTS + 5.2 LTS matrix, installs Mesa for renders), release.yml (zip on tag)
 ```
 
