@@ -171,6 +171,13 @@ next. A 2-level cliff shows twice as much: two levels of side wall and
 you add to a marked mesh later becomes terrain on the next **Update Rig** (or
 Build Rig, or Mark as Terrain).
 
+**Walls that are not straight up.** A wall's height is measured along the
+wall itself, from its base to its top, so a profile that steps in and out
+(ledges, a zigzag, a chamfered top) leans as one wall: every vertex moves in
+proportion to its depth below the top. Faces steeper than 30 degrees count
+as wall; flatter ones are ground or ramp. Snap to Levels rounds the height of
+the whole wall, not of each edge loop, so loops part way up stay in line.
+
 **Decorations.** A terrain mesh can hold loose parts that are not connected
 to the rest: stones stuck on a wall, a ledge, a sign. The largest loose part
 of each mesh (by surface area) is the terrain itself; every other loose part
@@ -224,8 +231,12 @@ The panel warns when the result will not be what you expect:
   edge vertex moves with it.
 - **Connected ground.** In one connected mesh, the ground faces next to a wall
   base are squashed or folded under the splayed wall. The wall hides them.
-- **Ramps and stairs.** A sloped face counts as part wall. The result is
-  continuous but not tuned; expect to paint stairs by hand.
+- **Ramps and stairs.** A slope steeper than 30 degrees is a wall and leans
+  like one; a flatter one stays where it is unless a wall above or below
+  moves its ends. Not tuned; expect to paint stairs by hand.
+- **Wall edits need Update Rig.** Which vertex is the top and base of each
+  wall is stored on the mesh. Moving vertices shows at once; adding or
+  removing edges or faces needs Update Rig.
 - **Front-pointing vertex.** A vertex whose two walls face front-left and
   front-right bulges forward slightly (0.13 units on a 24-sided cylinder).
   Turn the shape so a face, not a vertex, points at the camera.

@@ -90,6 +90,17 @@ REMOVED_ATTRIBUTES = (
     splay.TERRAIN_ATTRIBUTE,
     splay.DETAIL_ATTRIBUTE,
     splay.MESH_ID_ATTRIBUTE,
+    splay.WALL_TOP_ATTRIBUTE,
+    splay.WALL_BASE_ATTRIBUTE,
+)
+
+# What Mark as Terrain writes on a source mesh (and Clear Terrain removes).
+TERRAIN_MARKS = (
+    splay.TERRAIN_ATTRIBUTE,
+    splay.DETAIL_ATTRIBUTE,
+    splay.MESH_ID_ATTRIBUTE,
+    splay.WALL_TOP_ATTRIBUTE,
+    splay.WALL_BASE_ATTRIBUTE,
 )
 
 RIG_OWNED = frozenset({RIG_NAME, CAMERA_NAME, SUN_NAME})
@@ -474,13 +485,15 @@ def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> dict[
        these sums, so the face count cancels.
     3. *Solve.* ``rhs / trace`` where ``det < RANK_EPS * trace^2`` (parallel
        walls), else ``adj @ rhs / det``; zero where ``trace`` is 0.
-    4. *Levels.* Column top minus z over Level Height, rounded half up when
-       Splay Snap is on. The column top is Field Min & Max (Max) of z grouped
-       by the plan position quantised to ``XY_QUANT``. Non-terrain points feed
-       -1e9 so a prop above terrain does not raise the column, and get 0
-       levels. Group ID is Hash Value of the two quantised integers; it is
-       evaluated twice with the integers swapped and the smaller maximum
-       taken, so only a collision in both hashes could merge two columns.
+    4. *Levels.* The wall's top is the higher of the column top (Field Min &
+       Max of z grouped by the plan position quantised to ``XY_QUANT``) and
+       the z of the vertex's stored wall top (the same maximum grouped by Mesh
+       Island and ``core.splay.WALL_TOP_ATTRIBUTE``); its base the lower of
+       the two minimums. Levels are ``(top - z) / Level Height``; with Splay
+       Snap the wall's whole height is rounded half up to levels and shared
+       out by depth below the top. Non-body points feed -1e9 / 1e9 so a prop
+       above terrain does not change a column, and get 0 levels. Each group
+       id is a Hash Value evaluated twice with its two integers swapped.
     5. *Mask.* ``core.splay.TERRAIN_ATTRIBUTE`` as a BOOLEAN named attribute
        (a missing attribute reads false).
     """
@@ -648,6 +661,33 @@ def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> dict[
     terrain = boolean("NIMPLY", marked, n_detail.outputs["Attribute"], lx - 200, ly - 450, "Body")
     terrain_z = switch("FLOAT", terrain, -1e9, pz, lx - 50, ly - 300, "Terrain Z")
 
+    base_z = switch("FLOAT", terrain, 1e9, pz, lx - 50, ly - 450, "Terrain Z (base)")
+
+    def group_extreme(key_a, key_b, px: float, py: float, name: str) -> tuple:
+        """(max, min) of the body's z over the points sharing the integer pair ``(key_a, key_b)``.
+
+        The group id is a hash of the pair; it is evaluated twice with the pair
+        swapped and the safer result taken, so only a collision in both hashes
+        could merge two groups.
+        """
+        tops, bases = [], []
+        for index, (value, seed) in enumerate(((key_a, key_b), (key_b, key_a))):
+            n_hash = add("FunctionNodeHashValue", px, py - 300 * index, f"{name} ID")
+            n_hash.data_type = "INT"
+            links.new(value, n_hash.inputs["Value"])
+            links.new(seed, n_hash.inputs["Seed"])
+            for z_socket, output, found in ((terrain_z, "Max", tops), (base_z, "Min", bases)):
+                n_ext = add("GeometryNodeFieldMinAndMax", px + 150, py - 300 * index, f"{name} {output}")
+                n_ext.data_type = "FLOAT"
+                n_ext.domain = "POINT"
+                links.new(z_socket, n_ext.inputs["Value"])
+                links.new(n_hash.outputs["Hash"], n_ext.inputs["Group ID"])
+                found.append(n_ext.outputs[output])
+        return (
+            math_node("MINIMUM", tops[0], tops[1], px + 300, py),
+            math_node("MAXIMUM", bases[0], bases[1], px + 300, py - 150),
+        )
+
     quantised = []
     for index, socket in enumerate((px_, py_)):
         n_int = add("FunctionNodeFloatToInt", lx, ly + 100 - 100 * index)
@@ -656,29 +696,50 @@ def _add_splay_field(ng: bpy.types.NodeTree, n_in: bpy.types.Node, add) -> dict[
             math_node("DIVIDE", socket, splay.XY_QUANT, lx - 100, ly + 100 - 100 * index), n_int.inputs[0]
         )
         quantised.append(n_int.outputs[0])
-    tops = []
-    for index, (value, seed) in enumerate((quantised, quantised[::-1])):
-        n_hash = add("FunctionNodeHashValue", lx + 150, ly - 200 * index, "Column ID")
-        n_hash.data_type = "INT"
-        links.new(value, n_hash.inputs["Value"])
-        links.new(seed, n_hash.inputs["Seed"])
-        n_max = add("GeometryNodeFieldMinAndMax", lx + 300, ly - 200 * index, "Column Top")
-        n_max.data_type = "FLOAT"
-        n_max.domain = "POINT"
-        links.new(terrain_z, n_max.inputs["Value"])
-        links.new(n_hash.outputs["Hash"], n_max.inputs["Group ID"])
-        tops.append(n_max.outputs["Max"])
-    top = math_node("MINIMUM", tops[0], tops[1], lx + 450, ly - 100, "Column Top")
-    raw = math_node(
-        "DIVIDE",
-        math_node("SUBTRACT", top, pz, lx + 600, ly - 100),
-        n_in.outputs["Level Height"],
-        lx + 750,
-        ly - 100,
-        "Levels",
+    column_top, column_base = group_extreme(quantised[0], quantised[1], lx + 150, ly, "Column")
+
+    # The wall's own top and base: Mark as Terrain stores their vertex indices
+    # (core.splay.wall_ends); the points sharing one within a mesh island give its z.
+    n_island = add("GeometryNodeInputMeshIsland", lx - 400, ly - 900)
+    ends = []
+    for index, name in enumerate((splay.WALL_TOP_ATTRIBUTE, splay.WALL_BASE_ATTRIBUTE)):
+        n_end = add("GeometryNodeInputNamedAttribute", lx - 400, ly - 1050 - 150 * index, f"Read {name}")
+        n_end.data_type = "INT"
+        n_end.inputs["Name"].default_value = name
+        ends.append(
+            group_extreme(
+                n_island.outputs["Island Index"],
+                n_end.outputs["Attribute"],
+                lx + 150,
+                ly - 700 - 700 * index,
+                name,
+            )
+        )
+    top = math_node("MAXIMUM", column_top, ends[0][0], lx + 600, ly - 100, "Wall Top")
+    bottom = math_node("MINIMUM", column_base, ends[1][1], lx + 600, ly - 250, "Wall Base")
+    drop = math_node("SUBTRACT", top, pz, lx + 750, ly - 100)
+    raw = math_node("DIVIDE", drop, n_in.outputs["Level Height"], lx + 900, ly - 100, "Levels")
+    # Snap: the whole wall's height in whole levels, shared out by depth below the top.
+    height = math_node("SUBTRACT", top, bottom, lx + 750, ly - 250, "Wall Height")
+    whole = math_node(
+        "FLOOR",
+        math_node(
+            "ADD",
+            math_node("DIVIDE", height, n_in.outputs["Level Height"], lx + 900, ly - 250),
+            0.5,
+            lx + 1000,
+            ly - 250,
+        ),
+        None,
+        lx + 1100,
+        ly - 250,
+        "Whole Levels",
     )
-    snapped = math_node("FLOOR", math_node("ADD", raw, 0.5, lx + 900, ly - 200), None, lx + 1050, ly - 200)
-    levels = switch("FLOAT", n_in.outputs["Splay Snap"], raw, snapped, lx + 1200, ly - 100, "Snap Levels")
+    share = math_node(
+        "DIVIDE", drop, math_node("MAXIMUM", height, 1e-9, lx + 900, ly - 400), lx + 1000, ly - 400
+    )
+    snapped = math_node("MULTIPLY", whole, share, lx + 1200, ly - 300)
+    levels = switch("FLOAT", n_in.outputs["Splay Snap"], raw, snapped, lx + 1350, ly - 100, "Snap Levels")
 
     # 5. Mask, and zero where no wall touches the vertex.
     levels = switch("FLOAT", terrain, 0.0, levels, lx + 1350, ly - 100, "Terrain Only")
@@ -1057,6 +1118,8 @@ def mark_terrain_mesh(mesh: bpy.types.Mesh) -> None:
     the loose parts other than the largest (``core.splay.detail_mask``), which
     then lean with the wall they sit on, and ``core.splay.MESH_ID_ATTRIBUTE``
     holds one value for the whole mesh so they only follow their own mesh.
+    ``core.splay.WALL_TOP_ATTRIBUTE`` and ``WALL_BASE_ATTRIBUTE`` hold the
+    vertex index of each vertex's wall top and base (``core.splay.wall_ends``).
     """
     count = len(mesh.vertices)
     verts = [0.0] * (count * 3)
@@ -1070,13 +1133,16 @@ def mark_terrain_mesh(mesh: bpy.types.Mesh) -> None:
     _point_attribute(mesh, splay.MESH_ID_ATTRIBUTE, "INT").data.foreach_set(
         "value", [splay.mesh_id(mesh.name)] * count
     )
+    top, base = splay.wall_ends(points, faces)
+    _point_attribute(mesh, splay.WALL_TOP_ATTRIBUTE, "INT").data.foreach_set("value", top.tolist())
+    _point_attribute(mesh, splay.WALL_BASE_ATTRIBUTE, "INT").data.foreach_set("value", base.tolist())
     mesh.update()
 
 
 def clear_terrain_mesh(mesh: bpy.types.Mesh) -> None:
     """Remove the terrain marks from ``mesh``."""
     removed = False
-    for name in (splay.TERRAIN_ATTRIBUTE, splay.DETAIL_ATTRIBUTE, splay.MESH_ID_ATTRIBUTE):
+    for name in TERRAIN_MARKS:
         attr = mesh.attributes.get(name)
         if attr is not None:
             mesh.attributes.remove(attr)

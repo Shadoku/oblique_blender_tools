@@ -412,3 +412,20 @@ finished vertex offsets was tried first and dropped: it skews with the quad
 triangulation. Build Rig / Update Rig re-mark every source mesh that is
 already marked, so geometry added after marking is picked up. The reference
 is `splay_offsets(..., detail=, group=)`.
+
+**Added 2026-11-24: walls that step in and out.** The column rule (highest
+vertex at the same x and y) fails on a wall whose profile zigzags: rings
+above each other do not share a plan position, so each ring got levels from
+an unrelated column, and Snap to Levels rounded every ring separately. The
+base flared and back walls shot out. Now Mark as Terrain also stores, per
+vertex, the index of its wall top and wall base (`oblique_wall_top`,
+`oblique_wall_base`; `core.splay.wall_ends`: walk only up, or only down,
+along edges of faces steeper than 30 degrees). In the node group the top is
+the higher of the column top and the z of the stored top (Field Min & Max
+grouped by Mesh Island and the stored index), the base the lower of the two
+minimums; the column rule stays so separate meshes stacked flush still
+chain. Levels are `(top - z) / level_height`; with snap,
+`round((top - base) / level_height) * (top - z) / (top - base)`. This
+changes one earlier behaviour on purpose: an edge loop half way up a
+straight 1-level wall now moves half as far (before, snap rounded it to a
+full level and kinked the wall).

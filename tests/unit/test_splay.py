@@ -471,3 +471,114 @@ def test_mesh_id_is_a_stable_signed_32_bit_integer() -> None:
     for name in ("Cube", "Cube.001", "", "Fels \u00e4"):
         assert -(2**31) <= splay.mesh_id(name) < 2**31
     assert any(splay.mesh_id(f"m{i}") < 0 for i in range(20))
+
+
+# --------------------------------------------------------------------------- walls that are not straight up
+
+
+def ring_box(rings, x0=-2.0, x1=2.0, y0=0.0, y1=3.0):
+    """A box built from horizontal rings ``(inset, z)``, bottom to top: a zigzag wall profile."""
+    verts, faces = [], []
+    for inset, z in rings:
+        verts += [
+            (x0 + inset, y0 + inset, z),
+            (x1 - inset, y0 + inset, z),
+            (x1 - inset, y1 - inset, z),
+            (x0 + inset, y1 - inset, z),
+        ]
+    for r in range(len(rings) - 1):
+        a, b = 4 * r, 4 * r + 4
+        faces += [(a + i, a + (i + 1) % 4, b + (i + 1) % 4, b + i) for i in range(4)]
+    last = 4 * (len(rings) - 1)
+    faces += [(3, 2, 1, 0), (last, last + 1, last + 2, last + 3)]
+    return verts, faces
+
+
+ZIGZAG = [(0.0, 0.0), (0.1, 0.25), (0.0, 0.5), (0.1, 0.75), (0.0, 1.0)]
+
+
+def test_wall_ends_of_a_box() -> None:
+    verts, faces = box(-2, 2, 0, 3, 0, 1)
+    top, base = splay.wall_ends(verts, faces)
+    assert top.tolist() == [4, 5, 6, 7, 4, 5, 6, 7]
+    assert base.tolist() == [0, 1, 2, 3, 0, 1, 2, 3]
+
+
+def test_wall_ends_follow_a_zigzag_wall() -> None:
+    verts, faces = ring_box(ZIGZAG)
+    top, base = splay.wall_ends(verts, faces)
+    for corner in range(4):
+        column = [4 * ring + corner for ring in range(len(ZIGZAG))]
+        assert top[column].tolist() == [column[-1]] * len(column)
+        assert base[column].tolist() == [column[0]] * len(column)
+
+
+def test_wall_ends_ignore_gentle_slopes() -> None:
+    """A ramp flatter than 30 degrees is ground, not wall: its vertices are their own ends."""
+    verts = [(0, 0, 0), (4, 0, 0), (4, 4, 1), (0, 4, 1)]  # rises 1 over 4: about 14 degrees
+    top, base = splay.wall_ends(verts, [(0, 1, 2, 3)])
+    assert top.tolist() == [0, 1, 2, 3]
+    assert base.tolist() == [0, 1, 2, 3]
+    assert splay.WALL_MIN_WEIGHT == 0.25
+
+
+def _with_ends(verts, faces, **kwargs):
+    top, base = splay.wall_ends(verts, faces)
+    return offsets(verts, faces, top=top, base=base, **kwargs)
+
+
+@pytest.mark.parametrize("snap", [True, False])
+def test_zigzag_wall_leans_evenly(snap: bool) -> None:
+    """Every ring moves in proportion to its depth below the top, as a straight wall would."""
+    verts, faces = ring_box(ZIGZAG)
+    got = _with_ends(verts, faces, snap=snap)
+    for ring, (_, z) in enumerate(ZIGZAG):
+        share = 1.0 - z
+        assert got[4 * ring + 0] == pytest.approx((-share, 0.0), abs=1e-9), ring
+        assert got[4 * ring + 1] == pytest.approx((share, 0.0), abs=1e-9), ring
+        assert got[4 * ring + 2] == pytest.approx((share, 2.0 * share), abs=1e-9), ring
+        assert got[4 * ring + 3] == pytest.approx((-share, 2.0 * share), abs=1e-9), ring
+
+
+def test_snap_rounds_the_whole_wall_not_each_ring() -> None:
+    """A 0.9 unit wall counts as 1 level at its base; a ring half way up gets half of that."""
+    rings = [(0.0, 0.0), (0.0, 0.45), (0.0, 0.9)]
+    verts, faces = ring_box(rings)
+    got = _with_ends(verts, faces)
+    assert got[0] == pytest.approx((-1.0, 0.0), abs=1e-9)
+    assert got[4] == pytest.approx((-0.5, 0.0), abs=1e-9)
+    assert got[8] == pytest.approx((0.0, 0.0), abs=1e-9)
+    low = _with_ends(*ring_box([(0.0, 0.0), (0.0, 0.2), (0.0, 0.4)]))
+    assert low == pytest.approx(np.zeros((12, 2)), abs=1e-9), "a 0.4 unit wall is 0 levels"
+
+
+def test_mid_wall_vertex_without_wall_ends_uses_its_column() -> None:
+    """With no wall ends given, the column (same plan position) supplies top and base."""
+    rings = [(0.0, 0.0), (0.0, 0.5), (0.0, 1.0)]
+    verts, faces = ring_box(rings)
+    got = offsets(verts, faces)
+    assert got[0] == pytest.approx((-1.0, 0.0), abs=1e-9)
+    assert got[4] == pytest.approx((-0.5, 0.0), abs=1e-9)
+
+
+def test_flush_stack_of_separate_boxes_still_chains_through_columns() -> None:
+    verts, faces = box(0, 4, 0, 3, 0, 1)
+    verts2, faces2 = box(0, 2, 0, 3, 1, 2, offset=8)
+    top, base = splay.wall_ends(verts, faces)
+    top2, base2 = splay.wall_ends(verts2, [tuple(i - 8 for i in f) for f in faces2])
+    got = offsets(
+        verts + verts2,
+        faces + faces2,
+        top=np.concatenate([top, top2 + 8]),
+        base=np.concatenate([base, base2 + 8]),
+    )
+    by_pos = {tuple(v): tuple(o) for v, o in zip(verts + verts2, got, strict=True)}
+    assert by_pos[(0, 0, 0)] == pytest.approx((-2.0, 0.0), abs=1e-9)
+    assert by_pos[(0, 0, 1)] == pytest.approx((-1.0, 0.0), abs=1e-9)
+    assert by_pos[(0, 0, 2)] == (0.0, 0.0)
+    assert by_pos[(4, 0, 0)] == pytest.approx((1.0, 0.0), abs=1e-9)
+
+
+def test_wall_end_attribute_names() -> None:
+    assert splay.WALL_TOP_ATTRIBUTE == "oblique_wall_top"
+    assert splay.WALL_BASE_ATTRIBUTE == "oblique_wall_base"

@@ -109,7 +109,7 @@ def _source_geometry(addon):
     """World-space verts, faces (global indices) and the terrain, detail and mesh id marks of every source mesh."""
     o = addon.core.oblique
     splay = addon.core.splay
-    verts, faces, terrain, detail, group = [], [], [], [], []
+    verts, faces, terrain, detail, group, top, base = [], [], [], [], [], [], []
     for ob in bpy.data.collections[o.SOURCE_COLLECTION].all_objects:
         if ob.type != "MESH":
             continue
@@ -133,14 +133,26 @@ def _source_geometry(addon):
             if attr is not None:
                 attr.data.foreach_get("value", values)
             target += values
-    marks = np.array(terrain, bool), np.array(detail, bool), np.array(group, np.int64)
+        for name, target in ((splay.WALL_TOP_ATTRIBUTE, top), (splay.WALL_BASE_ATTRIBUTE, base)):
+            attr = mesh.attributes.get(name)
+            values = list(range(len(mesh.vertices)))
+            if attr is not None:
+                attr.data.foreach_get("value", values)
+            target += [offset + v for v in values]
+    marks = (
+        np.array(terrain, bool),
+        np.array(detail, bool),
+        np.array(group, np.int64),
+        np.array(top, np.int64),
+        np.array(base, np.int64),
+    )
     return np.array(verts, float), faces, marks
 
 
 def _expected(addon, splayed: bool = True) -> np.ndarray:
     """Turn, seat, splay (core reference), shear: what the rig should evaluate to."""
     params = _params(addon)
-    verts, faces, (terrain, detail, group) = _source_geometry(addon)
+    verts, faces, (terrain, detail, group, top, base) = _source_geometry(addon)
     c, s = math.cos(params.direction), math.sin(params.direction)
     turned = verts @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]).T
     if params.auto_seat:
@@ -158,6 +170,8 @@ def _expected(addon, splayed: bool = True) -> np.ndarray:
             terrain=terrain,
             detail=detail,
             group=group,
+            top=top,
+            base=base,
         )
         turned[:, :2] += offsets
     a, b = params.shear()
@@ -538,6 +552,67 @@ def test_details_follow_with_direction_and_edge_ids(addon) -> None:
     split, names = _evaluated(addon)
     assert {tuple(round(c, 4) for c in v) for v in split} == {tuple(round(c, 4) for c in v) for v in plain}
     assert not names & set(addon.rig.REMOVED_ATTRIBUTES), names
+
+
+# --------------------------------------------------------------------------- walls that step in and out
+
+
+def _ring_box(rings, x0=-2.0, x1=2.0, y0=0.0, y1=3.0):
+    verts, faces = [], []
+    for inset, z in rings:
+        verts += [
+            (x0 + inset, y0 + inset, z),
+            (x1 - inset, y0 + inset, z),
+            (x1 - inset, y1 - inset, z),
+            (x0 + inset, y1 - inset, z),
+        ]
+    for r in range(len(rings) - 1):
+        a, b = 4 * r, 4 * r + 4
+        faces += [(a + i, a + (i + 1) % 4, b + (i + 1) % 4, b + i) for i in range(4)]
+    last = 4 * (len(rings) - 1)
+    faces += [(3, 2, 1, 0), (last, last + 1, last + 2, last + 3)]
+    return verts, faces
+
+
+ZIGZAG = [(0.0, 0.0), (0.1, 0.25), (0.0, 0.5), (0.1, 0.75), (0.0, 1.0)]
+
+
+@pytest.mark.parametrize("snap", [True, False])
+def test_zigzag_wall_leans_evenly(addon, snap) -> None:
+    """A wall profile that steps in and out leans as one wall: every ring by its depth below the top."""
+    verts, faces = _ring_box(ZIGZAG)
+    _mesh_object(addon, "Zigzag", verts, faces, terrain=True)
+    _top_down(addon, auto_seat=False, splay_snap=snap)
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    for inset, z in ZIGZAG:
+        share = 1.0 - z
+        y = 3.0 - inset + 2.0 * share  # back right corner of this ring
+        assert any(np.allclose(p, (2.0 - inset + share, y, z + y), atol=TOL) for p in got), (inset, z)
+
+
+def test_two_zigzag_duplicates_at_different_heights_do_not_mix(addon) -> None:
+    """Linked duplicates share the stored wall ends; each island still finds its own top and base."""
+    verts, faces = _ring_box(ZIGZAG)
+    first = _mesh_object(addon, "Zigzag", verts, faces, terrain=True)
+    second = bpy.data.objects.new("Zigzag High", first.data)
+    second.location = (8.0, 0.0, 3.0)
+    addon.rig.get_or_create_collection(bpy.context.scene).objects.link(second)
+    _top_down(addon, auto_seat=False)
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    assert any(np.allclose(p, (3.0, 5.0, 5.0), atol=TOL) for p in got)
+    assert any(np.allclose(p, (11.0, 5.0, 8.0), atol=TOL) for p in got)
+
+
+def test_mid_wall_ring_keeps_a_straight_wall_straight(addon) -> None:
+    """Snap rounds the wall, not each ring: a ring half way up a 1 level wall moves half as far."""
+    verts, faces = _ring_box([(0.0, 0.0), (0.0, 0.5), (0.0, 1.0)])
+    _mesh_object(addon, "Ringed", verts, faces, terrain=True)
+    _top_down(addon, auto_seat=False)
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    assert any(np.allclose(p, (-2.5, 0.0, 0.5), atol=TOL) for p in got)
 
 
 def test_fit_includes_the_splayed_base(addon) -> None:

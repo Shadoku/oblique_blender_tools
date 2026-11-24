@@ -335,3 +335,19 @@ def test_marked_detail_leans_with_its_wall_in_the_rig(addon) -> None:
     # base corner (-1.2, 0.9, 1.9) is 0.1 below it: 0.05 levels of 1 tile to the left, then sheared.
     assert any(abs(x + 1.1) < 1e-4 and abs(y - 1.0) < 1e-4 and abs(z - 3.1) < 1e-4 for x, y, z in points)
     assert any(abs(x + 1.25) < 1e-4 and abs(y - 0.9) < 1e-4 and abs(z - 2.8) < 1e-4 for x, y, z in points)
+
+
+def test_mark_stores_each_vertex_wall_top_and_base(addon) -> None:
+    splay = addon.core.splay
+    ob = _mesh_object(addon, "Ground")  # a cube: every vertex is the top or the base of its edge
+    assert bpy.ops.oblique_rig.mark_terrain() == {"FINISHED"}
+    mesh = ob.data
+    z = [v.co.z for v in mesh.vertices]
+    top = _values(mesh, splay.WALL_TOP_ATTRIBUTE)
+    base = _values(mesh, splay.WALL_BASE_ATTRIBUTE)
+    for name in (splay.WALL_TOP_ATTRIBUTE, splay.WALL_BASE_ATTRIBUTE):
+        assert (mesh.attributes[name].domain, mesh.attributes[name].data_type) == ("POINT", "INT")
+    assert all(z[t] == max(z) for t in top)
+    assert all(z[b] == min(z) for b in base)
+    assert bpy.ops.oblique_rig.clear_terrain() == {"FINISHED"}
+    assert not set(addon.rig.TERRAIN_MARKS) & {a.name for a in mesh.attributes}
