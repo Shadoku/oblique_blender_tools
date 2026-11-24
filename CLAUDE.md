@@ -118,7 +118,7 @@ src/<id>/                   the extension package (this is what gets zipped)
   __init__.py               register()/unregister(): ordered CLASSES tuple only
   core/                     pure Python (+ numpy), no bpy:
     oblique.py              shear, pixel-exact params (RigParams, splay()), projection, fit_frame,
-                            half-tile rounding, Tiles panel readout and warnings
+                            quarter-tile rounding, Tiles panel readout and warnings
     primitives.py           calibration mesh vertices
     outline.py              whole-pixel outlines, labels, merge_near_colors
     edge_ids.py             island index <-> colour for sharp-edge outlines (EDGES pass)

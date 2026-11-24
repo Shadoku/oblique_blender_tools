@@ -126,6 +126,8 @@ class OBLIQUE_RIG_PT_tiles(_SubPanel, Panel):
         row = layout.row(align=True)
         row.operator(OBLIQUE_RIG_OT_mark_terrain.bl_idname, icon="CHECKBOX_HLT")
         row.operator(OBLIQUE_RIG_OT_clear_terrain.bl_idname, icon="CHECKBOX_DEHLT")
+        # Build Rig under another name: refreshes the sheared view after any setting changed.
+        layout.operator(OBLIQUE_RIG_OT_build.bl_idname, text="Update Rig", icon="FILE_REFRESH")
 
         params = params_from_settings(settings)
         readout = splay_readout(params)

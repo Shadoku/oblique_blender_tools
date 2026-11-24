@@ -176,15 +176,16 @@ multiples of it. With Snap to Levels on, a slightly-off height still gives a
 side wall a whole number of tiles wide and puts the back wall's base a whole
 number of tiles above the wall's ground line; the front wall always shows its
 true height. Tops are whole tiles only when Depth Up is a multiple of Pixels
-per Unit. Half tiles are whole pixels only when Pixels per Unit is even.
+per Unit. Half tiles are whole pixels only when Pixels per Unit is even,
+quarter tiles only when it is a multiple of 4.
 
 The panel warns when the result will not be what you expect:
 
 - "Tile Splay needs Depth Up above 0": with Depth Up 0 nothing splays.
 - "Whole tiles need Depth Right 0": the splay still works, but the back
   offset also shifts wall bases sideways, not necessarily by whole pixels.
-- "Half tiles need an even Pixels per Unit": a half tile at an odd Pixels per
-  Unit is not a whole number of pixels.
+- "Side or Back Tiles is not a whole number of pixels": a half tile needs an
+  even Pixels per Unit, a quarter tile a multiple of 4.
 
 ### Limits
 
@@ -256,14 +257,17 @@ non-zero):
 |---|---|---|
 | Tile Splay | off | Move the wall bases of terrain meshes outward, so side walls get width and back walls show a rim. Needs Depth Up above 0. |
 | Level Height | 1 | Wall height in units that counts as one level. |
-| Side Tiles | 1.0 | Width of a side wall per level, in tiles (0 to 8, steps of half a tile). |
-| Back Tiles | 1.0 | Height of a back wall's rim per level, in tiles (0 to 8, steps of half a tile). |
+| Side Tiles | 1.0 | Width of a side wall per level, in tiles (0 to 8, steps of a quarter tile). 0 keeps side walls vertical. |
+| Back Tiles | 1.0 | Height of a back wall's rim per level, in tiles (0 to 8, steps of a quarter tile). 0 shows no rim. |
 | Snap to Levels | on | Round wall heights to whole levels (half up), so side and back walls are whole tiles. |
 | Mark as Terrain | | Mark the selected meshes as terrain (Object Mode). Non-mesh objects are skipped. |
 | Clear Terrain | | Remove the mark from the selected meshes. |
+| Update Rig | | Rebuild the rig from the current settings (the same as Build Rig). |
 
-Side Tiles and Back Tiles are used rounded to the nearest half tile (half
-up): a typed 0.7 behaves as 0.5. Below the buttons: the readout of what one
+Side Tiles and Back Tiles are used rounded to the nearest quarter tile (half
+up): a typed 0.7 behaves as 0.75. The five Tiles settings apply to a built
+rig as soon as they change. Settings in the other panels (the projection, the
+frame, the direction) apply on Update Rig. Below the buttons: the readout of what one
 level gives on screen, using the rounded values, and the warnings described
 in [Top-down tilesets](#top-down-tilesets).
 

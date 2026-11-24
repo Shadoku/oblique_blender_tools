@@ -190,13 +190,13 @@ def test_splay_panel_names(addon) -> None:
         assert rna[identifier].description, identifier
 
 
-def test_splay_tiles_allow_half_tiles(addon) -> None:
-    """Side and Back Tiles step by half tiles in the UI and show one decimal."""
+def test_splay_tiles_step_by_quarter_tiles(addon) -> None:
+    """Side and Back Tiles step by quarter tiles in the UI and show two decimals."""
     rna = addon.properties.OBLIQUE_RIG_Settings.bl_rna.properties
     for name in ("splay_side_tiles", "splay_back_tiles"):
-        assert rna[name].step == 50, name  # Blender's float step is in hundredths
-        assert rna[name].precision == 1, name
-        assert "half tile" in rna[name].description, name
+        assert rna[name].step == 25, name  # Blender's float step is in hundredths
+        assert rna[name].precision == 2, name
+        assert "quarter tile" in rna[name].description, name
 
 
 def test_splay_tiles_reach_params_unrounded_and_splay_rounds(addon) -> None:
@@ -208,8 +208,8 @@ def test_splay_tiles_reach_params_unrounded_and_splay_rounds(addon) -> None:
     settings.splay_back_tiles = 1.5
     params = addon.properties.params_from_settings(settings)
     assert params.splay_side_tiles == pytest.approx(0.7)
-    assert params.splay_tiles() == (0.5, 1.5)
-    assert params.splay() == pytest.approx((0.5, 2.5))
+    assert params.splay_tiles() == (0.75, 1.5)
+    assert params.splay() == pytest.approx((0.75, 2.5))
 
 
 def test_output_dir_accepts_blend_relative_paths(addon) -> None:

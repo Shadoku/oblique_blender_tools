@@ -756,13 +756,38 @@ def build_rig_object(
     set_modifier_input(mod, "Edge IDs", False)  # only the EDGES render pass turns it on
     set_modifier_input(mod, "Crease Angle", float(params.crease_angle))
     set_modifier_input(mod, "Marked Sharp", bool(params.edge_marked_sharp))
+    _set_splay_inputs(mod, params)
+    rig.update_tag()
+    return rig
+
+
+def _set_splay_inputs(mod: bpy.types.Modifier, params: RigParams) -> None:
     side, back = params.splay()
     set_modifier_input(mod, "Splay Side", float(side))
     set_modifier_input(mod, "Splay Back", float(back))
     set_modifier_input(mod, "Level Height", float(params.splay_level_height))
     set_modifier_input(mod, "Splay Snap", bool(params.splay_snap))
+
+
+def update_splay_inputs(params: RigParams) -> bool:
+    """Push the Tile Splay settings to an existing rig's modifier; return whether anything was set.
+
+    Called when a Tiles setting changes, so the sheared view follows without a
+    rebuild. Does nothing when there is no rig, when its node group predates
+    the splay inputs (a rig built by 0.3), or when the projection is invalid
+    (Build Rig reports that).
+    """
+    rig = bpy.data.objects.get(RIG_NAME)
+    mod = rig.modifiers.get(MODIFIER_NAME) if rig is not None else None
+    if mod is None or mod.type != "NODES" or mod.node_group is None:
+        return False
+    try:
+        _input_identifier(mod.node_group, "Splay Side")
+        _set_splay_inputs(mod, params)
+    except (KeyError, ValueError):
+        return False
     rig.update_tag()
-    return rig
+    return True
 
 
 def build_camera(

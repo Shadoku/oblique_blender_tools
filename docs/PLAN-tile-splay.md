@@ -387,3 +387,14 @@ readout shows the rounded values in pixels. A half tile is a whole number of
 pixels only when Pixels per Unit is even; the Tiles panel warns "Half tiles
 need an even Pixels per Unit" otherwise. This replaces the Int entries in the
 section 4 table and the first open question of section 11.
+
+**Changed 2026-11-24, after first use: quarter tiles, live settings, Update
+Rig.** Side Tiles and Back Tiles step by a quarter tile (`TILE_STEP = 0.25`,
+UI step 0.25, two decimals; `round_tiles` replaces the half-tile rounding).
+The warning becomes "Side or Back Tiles is not a whole number of pixels"
+(rounded tiles times Pixels per Unit is not whole). The five Tiles
+properties have an update callback (`rig.update_splay_inputs`) that pushes
+them to an existing rig's modifier, so a change, including to 0, shows at
+once; before this a change only applied on the next rebuild, which looked
+like 0 doing nothing. The Tiles panel gets an Update Rig button (the Build
+Rig operator) for changes in other panels.

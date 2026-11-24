@@ -213,6 +213,65 @@ def test_splay_disabled_sets_zero_offsets(addon) -> None:
     assert (get(mod, "Splay Side"), get(mod, "Splay Back")) == (0.0, 0.0)
 
 
+# --------------------------------------------------------------------------- live settings
+
+
+@pytest.mark.parametrize(
+    ("side", "back", "base_corner"),
+    [
+        (0.0, 1.0, (2.0, 5.0)),  # side walls stay vertical, the back still splays
+        (1.0, 0.0, (3.0, 4.0)),  # the back wall only clears the top edge: no rim
+        (0.0, 0.0, (2.0, 4.0)),
+        (0.25, 0.25, (2.25, 4.25)),
+    ],
+)
+def test_tile_settings_apply_without_a_rebuild(addon, side, back, base_corner) -> None:
+    """Changing Side or Back Tiles updates the built rig at once, including to 0."""
+    _marked_box(addon)
+    _top_down(addon, auto_seat=False)
+    settings = _settings(addon)
+    settings.splay_side_tiles = side
+    settings.splay_back_tiles = back
+    got, _ = _evaluated(addon)
+    _assert_same_points(got, _expected(addon))
+    x, y = base_corner  # back right base corner, sheared: z = b * y
+    assert any(np.allclose(p, (x, y, y), atol=TOL) for p in got), sorted(got)
+
+
+def test_every_tile_setting_updates_the_modifier(addon) -> None:
+    _marked_box(addon)
+    _top_down(addon)
+    settings = _settings(addon)
+    get = addon.rig.get_modifier_input
+    mod = _modifier(addon)
+    settings.splay_level_height = 2.0
+    assert get(mod, "Level Height") == pytest.approx(2.0)
+    assert get(mod, "Splay Back") == pytest.approx(3.0)
+    settings.splay_snap = False
+    assert get(mod, "Splay Snap") is False
+    settings.splay_enabled = False
+    assert (get(mod, "Splay Side"), get(mod, "Splay Back")) == (0.0, 0.0)
+    settings.splay_enabled = True
+    assert get(mod, "Splay Side") == pytest.approx(1.0)
+
+
+def test_tile_settings_without_a_rig_change_nothing(addon) -> None:
+    settings = _settings(addon)
+    settings.splay_enabled = True
+    settings.splay_side_tiles = 0.0
+    assert bpy.data.objects.get(addon.core.oblique.RIG_NAME) is None
+    assert bpy.data.node_groups.get(addon.core.oblique.NODEGROUP_NAME) is None
+
+
+def test_tile_settings_with_an_invalid_projection_do_not_raise(addon) -> None:
+    _marked_box(addon)
+    _top_down(addon)
+    settings = _settings(addon)
+    settings.depth_px_up = 0  # both depth steps 0: shear() raises
+    settings.splay_side_tiles = 2.0
+    assert addon.rig.get_modifier_input(_modifier(addon), "Splay Side") == pytest.approx(1.0)
+
+
 # --------------------------------------------------------------------------- shapes against the reference
 
 

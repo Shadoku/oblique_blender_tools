@@ -126,7 +126,15 @@ def test_tiles_panel_sits_between_projection_and_frame(addon) -> None:
 def test_tiles_panel_draws_settings_and_buttons(addon, recording_layout) -> None:
     calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
     assert _props(calls) == SPLAY_SETTINGS
-    assert _operators(calls) == {"oblique_rig.mark_terrain", "oblique_rig.clear_terrain"}
+    assert _operators(calls) == {"oblique_rig.mark_terrain", "oblique_rig.clear_terrain", "oblique_rig.build"}
+
+
+def test_tiles_panel_has_an_update_rig_button(addon, recording_layout) -> None:
+    """Build Rig under the name Update Rig, so the sheared view can be refreshed from this panel."""
+    calls = _draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)
+    updates = [c for c in calls if c[0] == "operator" and c[1][0] == "oblique_rig.build"]
+    assert len(updates) == 1
+    assert updates[0][2].get("text") == "Update Rig"
 
 
 def test_tiles_readout(addon, recording_layout) -> None:
@@ -136,13 +144,13 @@ def test_tiles_readout(addon, recording_layout) -> None:
     assert _warnings(calls) == []
 
 
-def test_tiles_readout_shows_rounded_half_tiles(addon, recording_layout) -> None:
+def test_tiles_readout_shows_rounded_tiles(addon, recording_layout) -> None:
     settings = addon.properties.get_settings(bpy.context)
     _top_down(settings)
     settings.splay_side_tiles = 0.7
     settings.splay_back_tiles = 2.5
     labels = _labels(_draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout))
-    assert "1 level = 16 px front, 8 px side, 40 px back" in labels
+    assert "1 level = 16 px front, 12 px side, 40 px back" in labels
 
 
 def test_tiles_no_warnings_when_splay_is_off(addon, recording_layout) -> None:
@@ -168,7 +176,7 @@ def test_tiles_warning_depth_right(addon, recording_layout) -> None:
     assert _warnings(calls) == ["Whole tiles need Depth Right 0"]
 
 
-def test_tiles_warning_half_tiles_odd_ppu(addon, recording_layout) -> None:
+def test_tiles_warning_part_tiles_not_whole_pixels(addon, recording_layout) -> None:
     settings = addon.properties.get_settings(bpy.context)
     _top_down(settings)
     settings.pixels_per_unit = 15
@@ -177,7 +185,7 @@ def test_tiles_warning_half_tiles_odd_ppu(addon, recording_layout) -> None:
     settings.splay_back_tiles = 0.5
     recording_layout.calls.clear()
     assert _warnings(_draw(addon.ui.OBLIQUE_RIG_PT_tiles, recording_layout)) == [
-        "Half tiles need an even Pixels per Unit"
+        "Side or Back Tiles is not a whole number of pixels"
     ]
 
 

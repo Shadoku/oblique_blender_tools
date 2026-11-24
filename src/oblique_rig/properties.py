@@ -58,6 +58,10 @@ def _on_view_mode_update(self: "OBLIQUE_RIG_Settings", context: bpy.types.Contex
     rig.apply_view_mode(scene, self.view_mode)
 
 
+def _on_splay_update(self: "OBLIQUE_RIG_Settings", context: bpy.types.Context) -> None:
+    rig.update_splay_inputs(params_from_settings(self))
+
+
 class OBLIQUE_RIG_Settings(PropertyGroup):
     # ------------------------------------------------------------------ frame
     pixels_per_unit: IntProperty(
@@ -151,6 +155,7 @@ class OBLIQUE_RIG_Settings(PropertyGroup):
             "and back walls show a rim, as in top-down tilesets. Needs Depth Up above 0"
         ),
         default=False,
+        update=_on_splay_update,
     )
     splay_level_height: FloatProperty(
         name="Level Height",
@@ -158,32 +163,39 @@ class OBLIQUE_RIG_Settings(PropertyGroup):
         default=1.0,
         min=0.0625,
         soft_max=8.0,
+        update=_on_splay_update,
     )
     splay_side_tiles: FloatProperty(
         name="Side Tiles",
-        description="Width in tiles of a side wall, per level; rounded to the nearest half tile",
+        description=(
+            "Width in tiles of a side wall, per level; rounded to the nearest quarter tile. "
+            "0 keeps side walls vertical"
+        ),
         default=1.0,
         min=0.0,
         max=8.0,
-        step=50,
-        precision=1,
+        step=25,
+        precision=2,
+        update=_on_splay_update,
     )
     splay_back_tiles: FloatProperty(
         name="Back Tiles",
         description=(
             "Height in tiles of the rim a back wall shows above the top, per level; "
-            "rounded to the nearest half tile"
+            "rounded to the nearest quarter tile. 0 shows no rim"
         ),
         default=1.0,
         min=0.0,
         max=8.0,
-        step=50,
-        precision=1,
+        step=25,
+        precision=2,
+        update=_on_splay_update,
     )
     splay_snap: BoolProperty(
         name="Snap to Levels",
         description="Round wall heights to whole levels, so side and back walls are whole tiles",
         default=True,
+        update=_on_splay_update,
     )
     # ------------------------------------------------------------------ direction
     direction: FloatProperty(
